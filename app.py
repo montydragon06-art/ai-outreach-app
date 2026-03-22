@@ -45,7 +45,7 @@ def send_personalized_email(client_info, client_name, lead_name, lead_email, lea
         RULES:
         1. Mention 'LEAD SPECIFIC INFO' naturally.
         2. Flow toward '{client_info['cta_purpose']}' using a '{client_info['cta_tone']}' tone.
-        3. Link: {client_info['cta_link']}
+        3. Include the link: {client_info['cta_link']}
         4. Under 100 words. Start 'Hi {lead_name},'.
         """
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
@@ -63,12 +63,15 @@ def send_personalized_email(client_info, client_name, lead_name, lead_email, lea
         return True
     except Exception as e: return str(e)
 
-# --- 3. APP CONFIG ---
+# --- 3. APP CONFIG & STATE ---
 st.set_page_config(page_title="Agency Command Center", layout="wide")
 
 if 'clients' not in st.session_state:
     st.session_state.clients = {}
     load_data()
+
+if 'editing_client' not in st.session_state:
+    st.session_state.editing_client = None
 
 st.title("📂 Agency Command Center")
 st.divider()
@@ -87,7 +90,7 @@ with t1:
         with colB:
             cta_link = st.text_input("CTA Link (URL)")
             cta_purpose = st.text_input("CTA Purpose")
-            cta_tone = st.selectbox("CTA Tone", ["Professional", "Friendly", "Urgent"])
+            cta_tone = st.selectbox("CTA Tone", ["Professional", "Friendly", "Direct", "Urgent"])
             interval = st.number_input("Days Between Sends", min_value=1, value=1)
             leads_file = st.file_uploader("Upload Leads (NAME, EMAIL, INFORMATION)", type=["csv", "xlsx"])
         
@@ -112,39 +115,57 @@ with t1:
                 }
                 save_data(); st.rerun()
 
-# TAB 2: VAULT (Manual Send Button Re-added)
+# TAB 2: VAULT (Manual Send & Edit Added)
 with t2:
     if not st.session_state.clients:
         st.info("Vault is empty.")
     for name, data in list(st.session_state.clients.items()):
         with st.expander(f"🏢 Client: {name}"):
-            st.write(f"**CTA:** {data.get('cta_purpose')} | **Target:** {data.get('cta_link')}")
+            # Info Display
+            st.write(f"**Current Goal:** {data.get('cta_purpose')} | **Tone:** {data.get('cta_tone')}")
             
-            # Action Row
-            c1, c2, c3 = st.columns([1, 1, 1])
+            # Action Buttons
+            c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
             
-            # MANUAL SEND BUTTON
-            if c1.button(f"🚀 Manual Batch Send", key=f"man_{name}"):
+            if c1.button(f"🚀 Manual Batch", key=f"man_{name}"):
                 if 'g_key' in st.session_state and st.session_state.g_key:
                     leads_df = data.get('leads', pd.DataFrame())
                     if not leads_df.empty:
-                        with st.spinner(f"Sending batch for {name}..."):
+                        with st.spinner(f"Sending batch..."):
                             for i, row in leads_df.iterrows():
-                                res = send_personalized_email(
-                                    data, name, row.get('FINAL_NAME', 'Target'), 
-                                    row.get('FINAL_EMAIL'), row.get('FINAL_INFO', 'your business'), 
-                                    st.session_state.g_key
-                                )
+                                res = send_personalized_email(data, name, row.get('FINAL_NAME', 'Target'), row.get('FINAL_EMAIL'), row.get('FINAL_INFO', 'your business'), st.session_state.g_key)
                                 data["send_log"].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Recipient": row.get('FINAL_EMAIL'), "Status": "Manual Sent ✅" if res == True else f"Error: {res}"})
                         save_data(); st.success("Batch Complete!"); st.rerun()
-                else: st.warning("Enter Groq Key in Sidebar first!")
+                else: st.warning("Enter Groq Key in Sidebar.")
 
-            if c2.button(f"🗑️ Delete Client", key=f"del_{name}"):
+            if c2.button(f"✏️ Edit Strategy", key=f"edit_btn_{name}"):
+                st.session_state.editing_client = name
+
+            if c3.button(f"🗑️ Delete", key=f"del_{name}"):
                 del st.session_state.clients[name]; save_data(); st.rerun()
             
-            auto_val = c3.toggle("Automation", value=data.get('auto_on', False), key=f"tog_{name}")
+            auto_val = c4.toggle("Automation", value=data.get('auto_on', False), key=f"tog_{name}")
             if auto_val != data.get('auto_on'):
                 data['auto_on'] = auto_val; save_data()
+
+            # Inline Editor Form
+            if st.session_state.editing_client == name:
+                st.divider()
+                with st.form(f"edit_form_{name}"):
+                    st.subheader(f"Edit {name} Settings")
+                    e_desc = st.text_area("Context", value=data['desc'])
+                    col_e1, col_e2 = st.columns(2)
+                    e_link = col_e1.text_input("CTA Link", value=data['cta_link'])
+                    e_purp = col_e2.text_input("CTA Purpose", value=data['cta_purpose'])
+                    e_tone = col_e1.selectbox("Tone", ["Professional", "Friendly", "Direct", "Urgent"], index=0)
+                    e_int = col_e2.number_input("Interval", value=data.get('interval', 1))
+                    
+                    if st.form_submit_button("Update Client"):
+                        data.update({"desc": e_desc, "cta_link": e_link, "cta_purpose": e_purp, "cta_tone": e_tone, "interval": e_int})
+                        save_data()
+                        st.session_state.editing_client = None
+                        st.success("Updated!")
+                        st.rerun()
 
 # TAB 3: LOGS
 with t3:
