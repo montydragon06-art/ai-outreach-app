@@ -7,78 +7,116 @@ from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# --- APP CONFIG ---
-st.set_page_config(page_title="Agency Automation Pro", layout="wide")
+# --- 1. APP CONFIG & SESSION INITIALIZATION ---
+st.set_page_config(page_title="Agency OS | Multi-Client AI", layout="wide", page_icon="🚀")
 
-# --- INITIALIZE MULTI-CLIENT STORAGE ---
+# These 'Session States' keep your data alive while the app is running
 if 'clients' not in st.session_state:
-    st.session_state.clients = {} # Stores {client_name: {desc: "", leads: df}}
-if 'logs' not in st.session_state:
-    st.session_state.logs = []
+    st.session_state.clients = {} # {Name: {desc: str, leads: df, email: {}, logs: []}}
+if 'active_view' not in st.session_state:
+    st.session_state.active_view = None
 
-# --- SIDEBAR: SETTINGS ---
+# --- 2. SIDEBAR CONTROLS ---
 with st.sidebar:
-    st.header("⚙️ Global Settings")
-    groq_api_key = st.text_input("Groq API Key", type="password")
-    
+    st.header("🤖 Automation Hub")
+    groq_key = st.text_input("Groq API Key", type="password")
     st.divider()
-    st.header("⏳ Automation Timer")
-    interval = st.number_input("Send interval (minutes)", min_value=1, value=60)
-    is_running = st.toggle("Activate Automation")
-
-# --- MAIN INTERFACE ---
-tab1, tab2, tab3 = st.tabs(["👥 Client Manager", "📧 Campaign Editor", "🤖 Automation Center"])
-
-with tab1:
-    st.subheader("Manage Client Profiles")
-    c_name = st.text_input("Client/Company Name")
-    c_desc = st.text_area("Company Value Proposition / Description")
+    loop_interval = st.number_input("Check-in Interval (mins)", min_value=1, value=15)
+    run_automation = st.toggle("Activate All Engines")
     
-    uploaded_leads = st.file_uploader("Add Leads for this Client", type=["csv", "xlsx"])
+    if run_automation and not groq_key:
+        st.error("Please enter a Groq Key to start.")
+
+# --- 3. MAIN INTERFACE TABS ---
+t1, t2, t3 = st.tabs(["🏢 Client & Email Setup", "🎯 Strategy & Templates", "📊 Automation Center"])
+
+# TAB 1: CLIENT & EMAIL SETUP
+with t1:
+    col_a, col_b = st.columns(2)
     
-    if st.button("Save/Update Client Profile"):
-        if c_name and c_desc:
-            leads_df = pd.read_csv(uploaded_leads) if uploaded_leads else pd.DataFrame()
-            st.session_state.clients[c_name] = {"desc": c_desc, "leads": leads_df}
-            st.success(f"Profile for {c_name} saved!")
-
-with tab2:
-    st.subheader("Outreach Strategy")
-    strategy = st.selectbox("Email Template Style", [
-        "The Free Gift (Value First)",
-        "The Direct Audit (Problem/Solution)",
-        "The Case Study (Social Proof)",
-        "Custom Instructions"
-    ])
-    custom_instr = st.text_area("Specific Instructions (e.g., 'Mention we are giving a free 30-min SEO audit')")
-
-with tab3:
-    st.subheader("Live Operations")
-    if not st.session_state.clients:
-        st.info("Add a client in Tab 1 to start.")
-    else:
-        active_clients = st.multiselect("Select Clients to Run", list(st.session_state.clients.keys()))
+    with col_a:
+        st.subheader("Register New Client")
+        new_c_name = st.text_input("Client Name (e.g., 'Apex SEO')")
+        new_c_desc = st.text_area("Company Description", placeholder="What do they do?")
+        new_leads = st.file_uploader("Upload Leads (CSV/XLSX)", type=["csv", "xlsx"])
         
-        if is_running:
-            st.warning("🚀 Automation is LIVE. Do not close this tab.")
-            
-            # Simple Automation Loop
-            while is_running:
-                now = datetime.now().strftime("%H:%M:%S")
-                for client in active_clients:
-                    data = st.session_state.clients[client]
-                    st.write(f"[{now}] Processing {client}...")
-                    
-                    # Logic to pick 1-5 leads that haven't been sent to yet 
-                    # (In a real app, you'd track 'Sent' status in the dataframe)
-                    
-                    # Example placeholders for the log
-                    st.session_state.logs.append(f"Sent batch for {client} at {now}")
-                
-                time.sleep(interval * 60)
-                st.rerun()
+        if st.button("Create Client Profile"):
+            if new_c_name:
+                df = pd.read_csv(new_leads) if new_leads else pd.DataFrame()
+                # Initialize the client structure
+                st.session_state.clients[new_c_name] = {
+                    "desc": new_c_desc,
+                    "leads": df,
+                    "email_config": {},
+                    "logs": [f"Profile created at {datetime.now().strftime('%H:%M')}"]
+                }
+                st.success(f"Successfully registered {new_c_name}")
 
-    st.divider()
-    st.write("### Activity Logs")
-    for log in reversed(st.session_state.logs[-10:]):
-        st.text(log)
+    with col_b:
+        st.subheader("Link Email Account")
+        if not st.session_state.clients:
+            st.info("Register a client first.")
+        else:
+            sel_client = st.selectbox("Select Client to Link", list(st.session_state.clients.keys()))
+            acc_email = st.text_input("Client's Sender Email")
+            acc_pass = st.text_input("App Password", type="password")
+            acc_host = st.selectbox("SMTP Server", ["smtp.gmail.com", "smtp.office365.com"])
+            
+            if st.button(f"Authenticate {sel_client}"):
+                st.session_state.clients[sel_client]["email_config"] = {
+                    "user": acc_email, "pass": acc_pass, "host": acc_host
+                }
+                st.session_state.clients[sel_client]["logs"].append("Email account linked.")
+                st.success(f"Email for {sel_client} is ready.")
+
+# TAB 2: STRATEGY
+with t2:
+    st.subheader("Global Outreach Settings")
+    framework = st.selectbox("Prompt Framework", ["Value-First (Free Gift)", "Direct Pitch", "Problem/Solution Audit"])
+    gift_details = st.text_input("Describe the 'Free Gift' or 'Offer'", placeholder="e.g. A free 10-minute video audit of their site")
+
+# TAB 3: AUTOMATION CENTER
+with t3:
+    st.subheader("Live Campaign Monitor")
+    
+    left_nav, right_details = st.columns([1, 2])
+    
+    with left_nav:
+        st.write("#### Active Campaigns")
+        for client in st.session_state.clients.keys():
+            if st.button(f"📂 {client}", use_container_width=True):
+                st.session_state.active_view = client
+            
+    with right_details:
+        if st.session_state.active_view:
+            v_client = st.session_state.active_view
+            c_data = st.session_state.clients[v_client]
+            
+            st.markdown(f"## {v_client} Dashboard")
+            st.divider()
+            
+            # Status Metrics
+            m1, m2 = st.columns(2)
+            m1.metric("Leads Loaded", len(c_data['leads']))
+            m2.metric("Email Status", "Connected" if c_data['email_config'] else "Missing")
+            
+            st.write(f"**Description:** {c_data['desc']}")
+            
+            st.write("#### Live Activity Log")
+            for log_entry in reversed(c_data['logs'][-10:]):
+                st.caption(log_entry)
+        else:
+            st.info("Select a campaign from the left to see live logs.")
+
+# --- 4. THE ENGINE (The 'Heartbeat') ---
+if run_automation:
+    current_time = datetime.now().strftime("%H:%M:%S")
+    for client_name, client_obj in st.session_state.clients.items():
+        # Only run if client has email settings
+        if client_obj["email_config"]:
+            # Update logs to show the app is 'Checking'
+            client_obj["logs"].append(f"[{current_time}] Engine pulse: Checking for pending leads...")
+    
+    # Wait for the interval (seconds)
+    time.sleep(loop_interval * 5) # For demo, we check every few seconds. Change to * 60 for minutes.
+    st.rerun()
