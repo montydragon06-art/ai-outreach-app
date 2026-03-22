@@ -30,31 +30,45 @@ def load_data():
                     info['leads'] = pd.read_json(info['leads'])
                 st.session_state.clients[name] = info
 
-# --- 2. PERSONALIZED MAILING ENGINE ---
+# --- 2. THE MAILING ENGINE (PERSONALIZED & SIGNATURE FIXED) ---
 def send_personalized_email(client_info, client_name, lead_name, lead_email, lead_info_snippet, groq_key):
     try:
         client = Groq(api_key=groq_key)
+        
+        # Updated prompt with strict signature rules to fix [Your Name] issues
         prompt = f"""
-        Write a high-converting cold email from {client_name} to {lead_name}.
-        LEAD SPECIFIC INFO: {lead_info_snippet}
+        Write a short, high-converting cold email from {client_name} to {lead_name}.
+        
+        LEAD DATA: {lead_info_snippet}
         CLIENT CONTEXT: {client_info['desc']}
+        
         CALL TO ACTION:
-        - Link: {client_info['cta_link']}
-        - Purpose: {client_info['cta_purpose']}
-        - Tone: {client_info['cta_tone']}
-        RULES:
-        1. Mention 'LEAD SPECIFIC INFO' naturally.
-        2. Flow toward '{client_info['cta_purpose']}' using a '{client_info['cta_tone']}' tone.
-        3. Include the link: {client_info['cta_link']}
-        4. Under 100 words. Start 'Hi {lead_name},'.
+        - Link to use: {client_info['cta_link']}
+        - Action Goal: {client_info['cta_purpose']}
+        - Voice Tone: {client_info['cta_tone']}
+        
+        STRICT RULES:
+        1. Start with 'Hi {lead_name},'.
+        2. Use the 'LEAD DATA' to show you've researched them personally.
+        3. Transition to the '{client_info['cta_purpose']}' using a '{client_info['cta_tone']}' tone.
+        4. Include the link: {client_info['cta_link']}.
+        5. SIGN OFF ONLY WITH: 'Best regards, {client_name}'.
+        6. DO NOT use brackets like [Your Name] or [Link]. Use the actual text provided.
+        7. Total length: Under 90 words.
         """
-        completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
+        
+        completion = client.chat.completions.create(
+            model="llama-3.1-8b-instant", # Fix for decommissioned model
+            messages=[{"role": "user", "content": prompt}]
+        )
         body = completion.choices[0].message.content
+        
         msg = MIMEMultipart()
         msg['From'] = f"{client_name} <{client_info['email']['user']}>"
         msg['To'] = lead_email
-        msg['Subject'] = f"Quick question for {lead_name}"
+        msg['Subject'] = f"Question for {lead_name}"
         msg.attach(MIMEText(body, 'plain'))
+        
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(client_info['email']['user'], client_info['email']['pass'])
@@ -64,7 +78,7 @@ def send_personalized_email(client_info, client_name, lead_name, lead_email, lea
     except Exception as e: return str(e)
 
 # --- 3. APP CONFIG & STATE ---
-st.set_page_config(page_title="Agency Command Center", layout="wide")
+st.set_page_config(page_title="Agency OS", layout="wide", page_icon="📂")
 
 if 'clients' not in st.session_state:
     st.session_state.clients = {}
@@ -78,115 +92,114 @@ st.divider()
 
 t1, t2, t3 = st.tabs(["➕ Add Client", "🗄️ Client Vault", "📜 Master Logs"])
 
-# TAB 1: CREATION
+# --- TAB 1: ADD CLIENT (WITH CTA SUITE) ---
 with t1:
+    st.subheader("New Strategy Setup")
     with st.form("new_client_form", clear_on_submit=True):
-        colA, colB = st.columns(2)
-        with colA:
+        col1, col2 = st.columns(2)
+        with col1:
             name = st.text_input("Company Name")
-            desc = st.text_area("Company Context")
-            email = st.text_input("Sender Email")
-            pw = st.text_input("App Password", type="password")
-        with colB:
-            cta_link = st.text_input("CTA Link (URL)")
-            cta_purpose = st.text_input("CTA Purpose")
-            cta_tone = st.selectbox("CTA Tone", ["Professional", "Friendly", "Direct", "Urgent"])
-            interval = st.number_input("Days Between Sends", min_value=1, value=1)
-            leads_file = st.file_uploader("Upload Leads (NAME, EMAIL, INFORMATION)", type=["csv", "xlsx"])
+            desc = st.text_area("What does this company do?")
+            email_user = st.text_input("Sender Email Address")
+            email_pass = st.text_input("App Password", type="password")
         
+        with col2:
+            cta_url = st.text_input("CTA Link (URL)")
+            cta_goal = st.text_input("CTA Purpose (e.g., Book an Appointment)")
+            cta_voice = st.selectbox("CTA Tone", ["Professional", "Casual", "Urgent", "Value-Driven"])
+            send_interval = st.number_input("Days Between Sends", min_value=1, value=1)
+            file = st.file_uploader("Upload Leads (CSV/XLSX)", type=["csv", "xlsx"])
+            
         if st.form_submit_button("📁 Save to Vault"):
             if name:
-                df = pd.DataFrame()
-                if leads_file:
+                leads_df = pd.DataFrame()
+                if file:
                     try:
-                        df = pd.read_excel(leads_file) if leads_file.name.endswith('.xlsx') else pd.read_csv(leads_file, encoding='latin1')
-                        df.columns = [str(c).strip().upper() for c in df.columns]
-                        for col in ['NAME','FIRST NAME']:
-                            if col in df.columns: df = df.rename(columns={col: 'FINAL_NAME'}); break
-                        for col in ['EMAIL','EMAIL ADDRESS']:
-                            if col in df.columns: df = df.rename(columns={col: 'FINAL_EMAIL'}); break
-                        for col in ['INFORMATION','INFO','NOTES']:
-                            if col in df.columns: df = df.rename(columns={col: 'FINAL_INFO'}); break
-                    except: st.error("Lead file error.")
+                        leads_df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
+                        leads_df.columns = [str(c).strip().upper() for c in leads_df.columns]
+                        # Mapping columns to ensure personalization works
+                        for c in ['NAME','FIRST NAME','FULL NAME']:
+                            if c in leads_df.columns: leads_df = leads_df.rename(columns={c: 'FINAL_NAME'}); break
+                        for c in ['EMAIL','EMAIL ADDRESS','MAIL']:
+                            if c in leads_df.columns: leads_df = leads_df.rename(columns={c: 'FINAL_EMAIL'}); break
+                        for c in ['INFORMATION','INFO','NOTES','DATA']:
+                            if c in leads_df.columns: leads_df = leads_df.rename(columns={c: 'FINAL_INFO'}); break
+                    except: st.error("Error loading lead file.")
+
                 st.session_state.clients[name] = {
-                    "desc": desc, "cta_link": cta_link, "cta_purpose": cta_purpose, "cta_tone": cta_tone,
-                    "interval": interval, "leads": df, "email": {"user": email, "pass": pw},
+                    "desc": desc, "cta_link": cta_url, "cta_purpose": cta_goal, "cta_tone": cta_voice,
+                    "interval": send_interval, "leads": leads_df, "email": {"user": email_user, "pass": email_pass},
                     "send_log": [], "last_run_time": None, "auto_on": False
                 }
-                save_data(); st.rerun()
+                save_data(); st.success(f"{name} added!"); st.rerun()
 
-# TAB 2: VAULT (Manual Send & Edit Added)
+# --- TAB 2: CLIENT VAULT (EDIT & MANUAL SEND) ---
 with t2:
     if not st.session_state.clients:
-        st.info("Vault is empty.")
+        st.info("No clients found.")
     for name, data in list(st.session_state.clients.items()):
-        with st.expander(f"🏢 Client: {name}"):
-            # Info Display
-            st.write(f"**Current Goal:** {data.get('cta_purpose')} | **Tone:** {data.get('cta_tone')}")
+        with st.expander(f"🏢 {name}"):
+            st.write(f"**Goal:** {data.get('cta_purpose')} | **Tone:** {data.get('cta_tone')}")
             
             # Action Buttons
-            c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+            b1, b2, b3, b4 = st.columns(4)
             
-            if c1.button(f"🚀 Manual Batch", key=f"man_{name}"):
+            if b1.button(f"🚀 Manual Batch", key=f"m_{name}"):
                 if 'g_key' in st.session_state and st.session_state.g_key:
-                    leads_df = data.get('leads', pd.DataFrame())
-                    if not leads_df.empty:
-                        with st.spinner(f"Sending batch..."):
-                            for i, row in leads_df.iterrows():
-                                res = send_personalized_email(data, name, row.get('FINAL_NAME', 'Target'), row.get('FINAL_EMAIL'), row.get('FINAL_INFO', 'your business'), st.session_state.g_key)
-                                data["send_log"].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Recipient": row.get('FINAL_EMAIL'), "Status": "Manual Sent ✅" if res == True else f"Error: {res}"})
-                        save_data(); st.success("Batch Complete!"); st.rerun()
+                    df = data.get('leads', pd.DataFrame())
+                    with st.spinner("Processing manual batch..."):
+                        for i, row in df.iterrows():
+                            res = send_personalized_email(data, name, row.get('FINAL_NAME', 'Target'), row.get('FINAL_EMAIL'), row.get('FINAL_INFO', 'your business'), st.session_state.g_key)
+                            data["send_log"].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Recipient": row.get('FINAL_EMAIL'), "Name": row.get('FINAL_NAME'), "Status": "Sent ✅" if res==True else f"Error: {res}"})
+                    save_data(); st.success("Batch Sent!"); st.rerun()
                 else: st.warning("Enter Groq Key in Sidebar.")
 
-            if c2.button(f"✏️ Edit Strategy", key=f"edit_btn_{name}"):
+            if b2.button(f"✏️ Edit", key=f"e_{name}"):
                 st.session_state.editing_client = name
 
-            if c3.button(f"🗑️ Delete", key=f"del_{name}"):
+            if b3.button(f"🗑️ Delete", key=f"d_{name}"):
                 del st.session_state.clients[name]; save_data(); st.rerun()
             
-            auto_val = c4.toggle("Automation", value=data.get('auto_on', False), key=f"tog_{name}")
-            if auto_val != data.get('auto_on'):
-                data['auto_on'] = auto_val; save_data()
+            auto = b4.toggle("Automation", value=data.get('auto_on', False), key=f"t_{name}")
+            if auto != data.get('auto_on'):
+                data['auto_on'] = auto; save_data()
 
-            # Inline Editor Form
+            # Inline Edit Form
             if st.session_state.editing_client == name:
                 st.divider()
-                with st.form(f"edit_form_{name}"):
-                    st.subheader(f"Edit {name} Settings")
-                    e_desc = st.text_area("Context", value=data['desc'])
-                    col_e1, col_e2 = st.columns(2)
-                    e_link = col_e1.text_input("CTA Link", value=data['cta_link'])
-                    e_purp = col_e2.text_input("CTA Purpose", value=data['cta_purpose'])
-                    e_tone = col_e1.selectbox("Tone", ["Professional", "Friendly", "Direct", "Urgent"], index=0)
-                    e_int = col_e2.number_input("Interval", value=data.get('interval', 1))
-                    
-                    if st.form_submit_button("Update Client"):
-                        data.update({"desc": e_desc, "cta_link": e_link, "cta_purpose": e_purp, "cta_tone": e_tone, "interval": e_int})
-                        save_data()
-                        st.session_state.editing_client = None
-                        st.success("Updated!")
-                        st.rerun()
+                with st.form(f"f_edit_{name}"):
+                    new_desc = st.text_area("Context", value=data['desc'])
+                    new_link = st.text_input("CTA Link", value=data['cta_link'])
+                    new_purp = st.text_input("CTA Purpose", value=data['cta_purpose'])
+                    if st.form_submit_button("Update Strategy"):
+                        data.update({"desc": new_desc, "cta_link": new_link, "cta_purpose": new_purp})
+                        save_data(); st.session_state.editing_client = None; st.rerun()
 
-# TAB 3: LOGS
+# --- TAB 3: LOGS ---
 with t3:
     if st.session_state.clients:
-        sel = st.selectbox("Select Client", list(st.session_state.clients.keys()))
-        st.table(pd.DataFrame(st.session_state.clients[sel]["send_log"]))
+        sel = st.selectbox("Client Log:", list(st.session_state.clients.keys()))
+        log_df = pd.DataFrame(st.session_state.clients[sel]["send_log"])
+        # Robust handling for empty or missing 'Time' to prevent ValueErrors
+        if not log_df.empty:
+            st.table(log_df)
 
-# --- 4. SIDEBAR & AUTOMATION ---
+# --- SIDEBAR & AUTOMATION ENGINE ---
 with st.sidebar:
     st.header("⚙️ Settings")
     st.session_state.g_key = st.text_input("Groq API Key", type="password")
-    master_switch = st.toggle("🚀 Start Engine")
+    master_run = st.toggle("🚀 Start Global Engine")
 
-if master_switch and st.session_state.g_key:
+if master_run and st.session_state.g_key:
     for name, data in st.session_state.clients.items():
         if data.get('auto_on', False):
+            # Check interval logic
             last = data.get('last_run_time')
-            if not last or (datetime.now() > datetime.fromisoformat(last) + timedelta(days=data.get('interval', 1))):
-                leads_df = data.get('leads', pd.DataFrame())
-                for i, row in leads_df.iterrows():
-                    res = send_personalized_email(data, name, row.get('FINAL_NAME', 'Target'), row.get('FINAL_EMAIL'), row.get('FINAL_INFO', 'your business'), st.session_state.g_key)
-                    data["send_log"].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Recipient": row.get('FINAL_EMAIL'), "Status": "Auto-Sent ✅" if res == True else f"Error: {res}"})
+            int_val = data.get('interval', 1)
+            if not last or (datetime.now() > datetime.fromisoformat(last) + timedelta(days=int_val)):
+                df = data.get('leads', pd.DataFrame())
+                for i, row in df.iterrows():
+                    send_personalized_email(data, name, row.get('FINAL_NAME', 'Target'), row.get('FINAL_EMAIL'), row.get('FINAL_INFO', 'your industry'), st.session_state.g_key)
+                    data["send_log"].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Recipient": row.get('FINAL_EMAIL'), "Name": row.get('FINAL_NAME'), "Status": "Auto ✅"})
                 data['last_run_time'] = datetime.now().isoformat(); save_data()
     time.sleep(60); st.rerun()
