@@ -16,7 +16,7 @@ def save_data():
     for name, info in st.session_state.clients.items():
         serializable_data[name] = info.copy()
         if isinstance(info['leads'], pd.DataFrame):
-            # Ensure columns are unique for JSON export
+            # Prevents the "duplicate columns" crash from image_054318.png
             temp_df = info['leads'].copy()
             temp_df.columns = [f"{col}_{i}" if duplicated else col 
                               for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
@@ -37,30 +37,31 @@ def process_leads(file):
     try:
         df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
         
-        # FIX: Remove entirely empty columns (A, B, C)
+        # STEP 1: Scan and delete entirely empty columns (A, B, C)
         df = df.dropna(axis=1, how='all')
         
-        # Standardize headers for mapping
-        original_headers = {str(c).strip().upper(): str(c) for c in df.columns}
+        # STEP 2: Standardize headers to find the exact matches
         df.columns = [str(c).strip().upper() for c in df.columns]
         
-        # LITERAL MAPPING: Connects F_NAME specifically to your "NAME" column
-        mapping = {"NAME": "F_NAME", "EMAIL": "F_EMAIL", "INFORMATION": "F_INFO", "PAINPOINT": "F_PAIN"}
+        # STEP 3: Literal Map - strictly scanning for your 4 required columns
+        mapping = {
+            "NAME": "F_NAME", 
+            "EMAIL": "F_EMAIL", 
+            "INFORMATION": "F_INFO", 
+            "PAINPOINT": "F_PAIN"
+        }
         
-        # Track what was actually mapped for the UI report
-        applied_mapping = {}
-        for key, target in mapping.items():
-            if key in df.columns:
-                applied_mapping[target] = original_headers[key]
+        # Record which exact headers were found for the Map Checker
+        found_map = {target: col for col in df.columns for key, target in mapping.items() if col == key}
         
         df = df.rename(columns=mapping)
         
-        # Drop rows where Tim or Jim's name is missing
+        # STEP 4: Only keep the rows where NAME (Tim/Jim) and EMAIL exist
         if "F_NAME" in df.columns:
             df = df.dropna(subset=['F_NAME'])
-            
-        # Store the mapping info in the dataframe attributes for the UI to read
-        df.attrs['mapping_report'] = applied_mapping
+        
+        # Save mapping metadata to the dataframe for the UI report
+        df.attrs['map_report'] = found_map
         return df
     except Exception as e:
         st.error(f"Spreadsheet Error: {e}")
@@ -69,19 +70,19 @@ def process_leads(file):
 # --- 2. MAILING ENGINE ---
 def send_personalized_email(client_info, client_name, lead_name, lead_email, lead_role, lead_pain, groq_key):
     try:
-        # Address Tim/Jim correctly, no "nan"
+        # Address Tim/Jim by the data found in the NAME column
         s_name = str(lead_name).strip() if not pd.isna(lead_name) else "there"
         
         client = Groq(api_key=groq_key)
         prompt = f"""
-        Professional cold email from {client_name} to {s_name}.
+        Write a professional cold email from {client_name} to {s_name}.
         Lead: {s_name}, Info: {lead_role}, Pain: {lead_pain}.
-        CTA: {client_info['cta_purpose']} at {client_info['cta_link']}.
+        CTA: {client_info['cta_purpose']} ({client_info['cta_link']}).
 
         STRICT RULES:
-        1. Start with 'Hi {s_name},'. 
-        2. NO fake statistics or studies (image_045da0.png).
-        3. Sign off ONLY as 'Best regards, {client_name}'.
+        1. Address the lead ONLY as {s_name}. No "Dear Nan".
+        2. NO fake stats (NO "75% study").
+        3. Sign off ONLY: 'Best regards, {client_name}'.
         """
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
         body = completion.choices[0].message.content
@@ -117,7 +118,7 @@ with t1:
         link = c2.text_input("CTA Link")
         purp = c2.text_input("CTA Purpose")
         tone = c2.selectbox("Tone", ["Professional", "Friendly", "Direct"])
-        leads = c2.file_uploader("Leads (Columns: NAME, EMAIL, INFORMATION, PAINPOINT)", type=["csv", "xlsx"])
+        leads = c2.file_uploader("Leads", type=["csv", "xlsx"])
         if st.form_submit_button("📁 Save to Vault"):
             df = process_leads(leads) if leads else pd.DataFrame()
             st.session_state.clients[name] = {"desc": desc, "cta_link": link, "cta_purpose": purp, "cta_tone": tone, "leads": df, "email": {"user": email, "pass": pw}, "send_log": []}
@@ -129,14 +130,14 @@ with t2:
         l_count = len(df)
         with st.expander(f"🏢 {name} | 📊 {l_count} Leads"):
             
-            # --- NEW: COLUMN MAP CHECKER ---
+            # THE COLUMN MAP CHECKER
             if l_count > 0:
-                st.subheader("🔍 Data Map Verification")
-                mapping_info = df.attrs.get('mapping_report', {})
+                report = df.attrs.get('map_report', {})
+                st.markdown("### 🔍 Column Scan Results")
                 mc1, mc2, mc3 = st.columns(3)
-                mc1.info(f"👤 Name Column: **{mapping_info.get('F_NAME', 'NOT FOUND')}**")
-                mc2.info(f"📧 Email Column: **{mapping_info.get('F_EMAIL', 'NOT FOUND')}**")
-                mc3.success(f"✅ Preview: {', '.join(df['F_NAME'].astype(str).head(3).tolist())}")
+                mc1.write(f"**NAME Detected:** {report.get('F_NAME', '❌ MISSING')}")
+                mc2.write(f"**EMAIL Detected:** {report.get('F_EMAIL', '❌ MISSING')}")
+                mc3.write(f"**Previewing Row 1:** {df['F_NAME'].iloc[0] if 'F_NAME' in df.columns else 'N/A'}")
                 st.divider()
 
             col1, col2, col3 = st.columns(3)
@@ -150,23 +151,24 @@ with t2:
             if col2.button("🗑️ Delete Client", key=f"d_{name}"):
                 del st.session_state.clients[name]; save_data(); st.rerun()
 
-            # Swap Leads Form
-            with st.form(key=f"upd_form_{name}"):
-                new_f = st.file_uploader("Replace Lead List", type=["csv", "xlsx"])
-                if st.form_submit_button("Update Leads"):
+            # The Lead Update Form
+            with st.form(key=f"upd_{name}"):
+                new_f = st.file_uploader("Update Spreadsheet", type=["csv", "xlsx"])
+                if st.form_submit_button("Sync New Data"):
                     if new_f:
                         data['leads'] = process_leads(new_f)
-                        save_data(); st.success("Updated!"); st.rerun()
+                        save_data(); st.success("Columns Re-Scanned and Updated!"); st.rerun()
 
+# SIDEBAR DASHBOARD
 with st.sidebar:
     st.header("⚙️ Dashboard")
     st.session_state.g_key = st.text_input("Groq API Key", type="password")
     if st.session_state.clients:
         st.divider()
-        st.subheader("📈 Performance Report")
+        st.subheader("📈 Agency Report")
         t_leads = sum(len(c.get('leads', [])) for c in st.session_state.clients.values())
         t_sent = sum(len(c.get('send_log', [])) for c in st.session_state.clients.values())
         st.metric("Total Leads", t_leads)
-        st.metric("Total Sent", t_sent)
+        st.metric("Total Successful Sends", t_sent)
         for c_name, c_data in st.session_state.clients.items():
-            st.write(f"- **{c_name}:** {len(c_data.get('leads', []))} leads")
+            st.write(f"- {c_name}: {len(c_data.get('leads', []))} leads")
