@@ -35,7 +35,6 @@ def send_personalized_email(client_info, client_name, lead_name, lead_email, lea
     try:
         client = Groq(api_key=groq_key)
         
-        # Prompt engineered to block hallucinations and use the 3 specific columns
         prompt = f"""
         Write a cold email from {client_name} to {lead_name}.
         
@@ -49,7 +48,7 @@ def send_personalized_email(client_info, client_name, lead_name, lead_email, lea
         - Tone: {client_info['cta_tone']}
 
         STRICT ADHERENCE RULES:
-        1. ONLY use the 'Painpoint' and 'Role' provided above. 
+        1. ONLY use the 'Painpoint' and 'Role' provided above.
         2. FORBIDDEN: Do not invent statistics, percentages, or external studies.
         3. FORBIDDEN: Do not assume any information not written in the Input Data.
         4. Start with 'Hi {lead_name},'.
@@ -115,7 +114,6 @@ with t1:
                     try:
                         df = pd.read_excel(leads_file) if leads_file.name.endswith('.xlsx') else pd.read_csv(leads_file, encoding='latin1')
                         df.columns = [str(c).strip().upper() for c in df.columns]
-                        # Mapping your 4 core columns
                         for c in ['NAME','FIRST NAME']:
                             if c in df.columns: df = df.rename(columns={c: 'FINAL_NAME'}); break
                         for c in ['EMAIL','EMAIL ADDRESS']:
@@ -132,7 +130,7 @@ with t1:
                 }
                 save_data(); st.rerun()
 
-# TAB 2: VAULT
+# TAB 2: VAULT (ENHANCED EDITING)
 with t2:
     if not st.session_state.clients:
         st.info("Vault is empty.")
@@ -140,7 +138,6 @@ with t2:
         with st.expander(f"🏢 Client: {name}"):
             c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
             
-            # Manual Send Button
             if c1.button(f"🚀 Manual Batch", key=f"man_{name}"):
                 if 'g_key' in st.session_state and st.session_state.g_key:
                     leads_df = data.get('leads', pd.DataFrame())
@@ -155,7 +152,7 @@ with t2:
                     save_data(); st.success("Batch Sent!"); st.rerun()
                 else: st.warning("Enter Groq Key in Sidebar.")
 
-            if c2.button(f"✏️ Edit Strategy", key=f"edit_btn_{name}"):
+            if c2.button(f"✏️ Edit Client", key=f"edit_btn_{name}"):
                 st.session_state.editing_client = name
 
             if c3.button(f"🗑️ Delete Client", key=f"del_{name}"):
@@ -165,14 +162,43 @@ with t2:
             if auto_val != data.get('auto_on'):
                 data['auto_on'] = auto_val; save_data()
 
+            # COMPREHENSIVE CLIENT EDITOR
             if st.session_state.editing_client == name:
+                st.markdown("---")
+                st.subheader(f"Editing: {name}")
                 with st.form(f"f_edit_{name}"):
-                    e_desc = st.text_area("Context", value=data['desc'])
-                    e_link = st.text_input("CTA Link", value=data['cta_link'])
-                    e_purp = st.text_input("CTA Purpose", value=data['cta_purpose'])
-                    if st.form_submit_button("Update"):
-                        data.update({"desc": e_desc, "cta_link": e_link, "cta_purpose": e_purp})
-                        save_data(); st.session_state.editing_client = None; st.rerun()
+                    edit_col1, edit_col2 = st.columns(2)
+                    with edit_col1:
+                        e_name = st.text_input("Company Name", value=name)
+                        e_desc = st.text_area("Company Context", value=data['desc'])
+                        e_email = st.text_input("Sender Email", value=data['email']['user'])
+                        e_pw = st.text_input("App Password", value=data['email']['pass'], type="password")
+                    with edit_col2:
+                        e_link = st.text_input("CTA Link", value=data['cta_link'])
+                        e_purp = st.text_input("CTA Purpose", value=data['cta_purpose'])
+                        e_tone = st.selectbox("CTA Tone", ["Professional", "Friendly", "Direct", "Urgent"], 
+                                             index=["Professional", "Friendly", "Direct", "Urgent"].index(data.get('cta_tone', "Professional")))
+                        e_int = st.number_input("Interval (Days)", value=data.get('interval', 1), min_value=1)
+                    
+                    if st.form_submit_button("Update All Client Info"):
+                        # If the name changed, we need to update the key in the dictionary
+                        updated_data = data.copy()
+                        updated_data.update({
+                            "desc": e_desc, "cta_link": e_link, "cta_purpose": e_purp, 
+                            "cta_tone": e_tone, "interval": e_int,
+                            "email": {"user": e_email, "pass": e_pw}
+                        })
+                        
+                        if e_name != name:
+                            st.session_state.clients[e_name] = updated_data
+                            del st.session_state.clients[name]
+                        else:
+                            st.session_state.clients[name] = updated_data
+                            
+                        save_data()
+                        st.session_state.editing_client = None
+                        st.success("Client fully updated!")
+                        st.rerun()
 
 # TAB 3: LOGS
 with t3:
