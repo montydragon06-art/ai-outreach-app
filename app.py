@@ -16,7 +16,7 @@ def save_data():
     for name, info in st.session_state.clients.items():
         serializable_data[name] = info.copy()
         if isinstance(info['leads'], pd.DataFrame):
-            # Prevents the "duplicate columns" crash from image_054318.png
+            # Unique column fix for JSON
             temp_df = info['leads'].copy()
             temp_df.columns = [f"{col}_{i}" if duplicated else col 
                               for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
@@ -36,63 +36,37 @@ def load_data():
 def process_leads(file):
     try:
         df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
-        
-        # STEP 1: Scan and delete entirely empty columns (A, B, C)
-        df = df.dropna(axis=1, how='all')
-        
-        # STEP 2: Standardize headers to find the exact matches
+        df = df.dropna(axis=1, how='all') # Drop empty A, B, C cols
         df.columns = [str(c).strip().upper() for c in df.columns]
         
-        # STEP 3: Literal Map - strictly scanning for your 4 required columns
-        mapping = {
-            "NAME": "F_NAME", 
-            "EMAIL": "F_EMAIL", 
-            "INFORMATION": "F_INFO", 
-            "PAINPOINT": "F_PAIN"
-        }
-        
-        # Record which exact headers were found for the Map Checker
+        # Literal Scanning for your 4 specific columns
+        mapping = {"NAME": "F_NAME", "EMAIL": "F_EMAIL", "INFORMATION": "F_INFO", "PAINPOINT": "F_PAIN"}
         found_map = {target: col for col in df.columns for key, target in mapping.items() if col == key}
         
         df = df.rename(columns=mapping)
-        
-        # STEP 4: Only keep the rows where NAME (Tim/Jim) and EMAIL exist
         if "F_NAME" in df.columns:
-            df = df.dropna(subset=['F_NAME'])
+            df = df.dropna(subset=['F_NAME']) # Ensure Tim/Jim exist
         
-        # Save mapping metadata to the dataframe for the UI report
         df.attrs['map_report'] = found_map
         return df
     except Exception as e:
-        st.error(f"Spreadsheet Error: {e}")
-        return pd.DataFrame()
+        st.error(f"Spreadsheet Error: {e}"); return pd.DataFrame()
 
 # --- 2. MAILING ENGINE ---
 def send_personalized_email(client_info, client_name, lead_name, lead_email, lead_role, lead_pain, groq_key):
     try:
-        # Address Tim/Jim by the data found in the NAME column
         s_name = str(lead_name).strip() if not pd.isna(lead_name) else "there"
-        
         client = Groq(api_key=groq_key)
-        prompt = f"""
-        Write a professional cold email from {client_name} to {s_name}.
+        prompt = f"""Write a professional cold email from {client_name} to {s_name}.
         Lead: {s_name}, Info: {lead_role}, Pain: {lead_pain}.
-        CTA: {client_info['cta_purpose']} ({client_info['cta_link']}).
-
-        STRICT RULES:
-        1. Address the lead ONLY as {s_name}. No "Dear Nan".
-        2. NO fake stats (NO "75% study").
-        3. Sign off ONLY: 'Best regards, {client_name}'.
-        """
+        Context: {client_info['desc']}. CTA: {client_info['cta_purpose']} ({client_info['cta_link']}).
+        STRICT RULES: 1. Address ONLY as {s_name}. 2. NO fake stats. 3. Sign off: Best regards, {client_name}."""
+        
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
         body = completion.choices[0].message.content
-        
-        msg = MIMEMultipart()
-        msg['From'] = f"{client_name} <{client_info['email']['user']}>"
-        msg['To'] = lead_email
-        msg['Subject'] = f"Quick question for {s_name}"
+        msg = MIMEMultipart(); msg['From'] = f"{client_name} <{client_info['email']['user']}>"
+        msg['To'] = lead_email; msg['Subject'] = f"Quick question for {s_name}"
         msg.attach(MIMEText(body, 'plain'))
-        
         server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls()
         server.login(client_info['email']['user'], client_info['email']['pass'])
         server.send_message(msg); server.quit()
@@ -101,13 +75,13 @@ def send_personalized_email(client_info, client_name, lead_name, lead_email, lea
 
 # --- 3. UI ---
 st.set_page_config(page_title="Agency Command Center", layout="wide")
-if 'clients' not in st.session_state:
-    st.session_state.clients = {}; load_data()
+if 'clients' not in st.session_state: st.session_state.clients = {}; load_data()
+if 'edit_target' not in st.session_state: st.session_state.edit_target = None
 
 st.title("📂 Agency Command Center")
-
 t1, t2, t3 = st.tabs(["➕ Add Client", "🗄️ Client Vault", "📜 Master Logs"])
 
+# TAB 1: ADD
 with t1:
     with st.form("new_client", clear_on_submit=True):
         c1, c2 = st.columns(2)
@@ -124,23 +98,38 @@ with t1:
             st.session_state.clients[name] = {"desc": desc, "cta_link": link, "cta_purpose": purp, "cta_tone": tone, "leads": df, "email": {"user": email, "pass": pw}, "send_log": []}
             save_data(); st.rerun()
 
+# TAB 2: VAULT (WITH EDIT BUTTON)
 with t2:
+    # --- Edit Overlay ---
+    if st.session_state.edit_target:
+        target = st.session_state.edit_target
+        with st.container(border=True):
+            st.subheader(f"✏️ Editing: {target}")
+            ed_data = st.session_state.clients[target]
+            e1, e2 = st.columns(2)
+            new_desc = e1.text_area("Update Context", value=ed_data['desc'])
+            new_email = e1.text_input("Update Email", value=ed_data['email']['user'])
+            new_pw = e1.text_input("Update Password", value=ed_data['email']['pass'], type="password")
+            new_link = e2.text_input("Update CTA Link", value=ed_data['cta_link'])
+            new_purp = e2.text_input("Update CTA Purpose", value=ed_data['cta_purpose'])
+            new_tone = e2.selectbox("Update Tone", ["Professional", "Friendly", "Direct"], index=["Professional", "Friendly", "Direct"].index(ed_data.get('cta_tone', 'Professional')))
+            
+            ec1, ec2 = st.columns(2)
+            if ec1.button("💾 Save Changes"):
+                st.session_state.clients[target].update({"desc": new_desc, "cta_link": new_link, "cta_purpose": new_purp, "cta_tone": new_tone, "email": {"user": new_email, "pass": new_pw}})
+                save_data(); st.session_state.edit_target = None; st.rerun()
+            if ec2.button("❌ Cancel"):
+                st.session_state.edit_target = None; st.rerun()
+        st.divider()
+
     for name, data in list(st.session_state.clients.items()):
         df = data.get('leads', pd.DataFrame())
-        l_count = len(df)
-        with st.expander(f"🏢 {name} | 📊 {l_count} Leads"):
-            
-            # THE COLUMN MAP CHECKER
-            if l_count > 0:
+        with st.expander(f"🏢 {name} | 📊 {len(df)} Leads"):
+            if len(df) > 0:
                 report = df.attrs.get('map_report', {})
-                st.markdown("### 🔍 Column Scan Results")
-                mc1, mc2, mc3 = st.columns(3)
-                mc1.write(f"**NAME Detected:** {report.get('F_NAME', '❌ MISSING')}")
-                mc2.write(f"**EMAIL Detected:** {report.get('F_EMAIL', '❌ MISSING')}")
-                mc3.write(f"**Previewing Row 1:** {df['F_NAME'].iloc[0] if 'F_NAME' in df.columns else 'N/A'}")
-                st.divider()
-
-            col1, col2, col3 = st.columns(3)
+                st.info(f"🔍 **Column Mapping:** NAME found in '{report.get('F_NAME', 'MISSING')}' | EMAIL found in '{report.get('F_EMAIL', 'MISSING')}'")
+            
+            col1, col2, col3, col4 = st.columns(4)
             if col1.button("🚀 Batch Send", key=f"s_{name}"):
                 if st.session_state.get('g_key'):
                     for _, r in df.iterrows():
@@ -148,27 +137,25 @@ with t2:
                         data["send_log"].append({"Time": datetime.now().strftime("%H:%M"), "Recipient": r.get('F_EMAIL'), "Status": "Sent ✅" if res==True else f"Error: {res}"})
                     save_data(); st.rerun()
             
-            if col2.button("🗑️ Delete Client", key=f"d_{name}"):
+            if col2.button("✏️ Edit Details", key=f"e_{name}"):
+                st.session_state.edit_target = name; st.rerun()
+                
+            if col3.button("🗑️ Delete", key=f"d_{name}"):
                 del st.session_state.clients[name]; save_data(); st.rerun()
 
-            # The Lead Update Form
-            with st.form(key=f"upd_{name}"):
-                new_f = st.file_uploader("Update Spreadsheet", type=["csv", "xlsx"])
-                if st.form_submit_button("Sync New Data"):
+            with st.form(key=f"upd_{name}"): # Fixed update form
+                new_f = st.file_uploader("Swap Lead List", type=["csv", "xlsx"])
+                if st.form_submit_button("Sync New Leads"):
                     if new_f:
                         data['leads'] = process_leads(new_f)
-                        save_data(); st.success("Columns Re-Scanned and Updated!"); st.rerun()
+                        save_data(); st.rerun()
 
-# SIDEBAR DASHBOARD
+# SIDEBAR
 with st.sidebar:
     st.header("⚙️ Dashboard")
     st.session_state.g_key = st.text_input("Groq API Key", type="password")
     if st.session_state.clients:
-        st.divider()
-        st.subheader("📈 Agency Report")
+        st.divider(); st.subheader("📈 Performance")
         t_leads = sum(len(c.get('leads', [])) for c in st.session_state.clients.values())
         t_sent = sum(len(c.get('send_log', [])) for c in st.session_state.clients.values())
-        st.metric("Total Leads", t_leads)
-        st.metric("Total Successful Sends", t_sent)
-        for c_name, c_data in st.session_state.clients.items():
-            st.write(f"- {c_name}: {len(c_data.get('leads', []))} leads")
+        st.metric("Total Leads", t_leads); st.metric("Total Sent", t_sent)
