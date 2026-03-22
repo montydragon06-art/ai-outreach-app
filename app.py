@@ -34,35 +34,24 @@ def load_data():
 def send_ai_email(client_info, client_name, lead_name, lead_email, groq_key):
     try:
         client = Groq(api_key=groq_key)
-        
-        # STRICT PROMPT: Using specific Company and Lead names
         prompt = f"""
         You are writing on behalf of the company: {client_name}.
         The person you are emailing is: {lead_name}.
-        
-        Context about {client_name}: {client_info['desc']}
+        Context: {client_info['desc']}
         Strategy: {client_info['strategy']}
         Offer: {client_info['offer']}
-        
-        Rules:
-        1. Start the email with 'Hi {lead_name},' or 'Hello {lead_name},'. 
-        2. NEVER use the word 'Friend'. 
-        3. Sign off as 'The {client_name} Team' or simply '{client_name}'.
-        4. Keep it under 80 words and professional.
+        Rules: Start with 'Hi {lead_name},'. Sign off as 'The {client_name} Team'. No 'Friend'. Under 80 words.
         """
-        
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}]
         )
         body = completion.choices[0].message.content
-
         msg = MIMEMultipart()
         msg['From'] = f"{client_name} <{client_info['email']['user']}>"
         msg['To'] = lead_email
         msg['Subject'] = f"Quick question for {lead_name}"
         msg.attach(MIMEText(body, 'plain'))
-
         server = smtplib.SMTP(client_info['email']['host'], 587)
         server.starttls()
         server.login(client_info['email']['user'], client_info['email']['pass'])
@@ -74,7 +63,6 @@ def send_ai_email(client_info, client_name, lead_name, lead_email, groq_key):
 
 # --- 3. APP CONFIG ---
 st.set_page_config(page_title="Agency Automation OS", layout="wide")
-
 if 'clients' not in st.session_state:
     st.session_state.clients = {}
     load_data()
@@ -83,29 +71,23 @@ if 'clients' not in st.session_state:
 with st.sidebar:
     st.header("⚙️ Global Settings")
     groq_key = st.text_input("Groq API Key", type="password")
-    st.divider()
-    day_interval = st.number_input("Send interval (Days)", min_value=1, value=1)
+    day_interval = st.number_input("Interval (Days)", min_value=1, value=1)
     auto_on = st.toggle("🚀 Activate Automation Loop")
-    
-    if st.button("Reset All Data"):
-        if os.path.exists(DATA_FILE): os.remove(DATA_FILE)
-        st.session_state.clients = {}
-        st.rerun()
 
 # --- 5. MAIN INTERFACE ---
-t1, t2 = st.tabs(["📂 Client Manager", "📜 Detailed Send Logs"])
+t1, t2 = st.tabs(["📂 Client Manager", "📜 Live Send Logs"])
 
 with t1:
     col_a, col_b = st.columns([1, 2])
     with col_a:
         st.subheader("Add/Update Client")
         c_name = st.text_input("Company/Client Name")
-        c_desc = st.text_area("What does this company do?")
+        c_desc = st.text_area("What do they do?")
         c_strat = st.selectbox("Strategy", ["Value-First", "Direct Pitch", "Audit"])
-        c_off = st.text_input("The Specific Offer (Free Gift)")
+        c_off = st.text_input("Specific Offer")
         c_email = st.text_input("Sender Email")
         c_pass = st.text_input("App Password", type="password")
-        c_leads = st.file_uploader("Upload Leads (CSV/XLSX)", type=["csv", "xlsx"])
+        c_leads = st.file_uploader("Upload Leads", type=["csv", "xlsx"])
         
         if st.button("📁 Save Folder"):
             if c_name:
@@ -113,33 +95,51 @@ with t1:
                 if c_leads:
                     try:
                         df = pd.read_excel(c_leads) if c_leads.name.endswith('.xlsx') else pd.read_csv(c_leads, encoding='latin1')
-                        # Clean columns: make them uppercase to match easily
+                        # --- COLUMN FIXER ---
+                        # Force columns to be uppercase and stripped of spaces
                         df.columns = [str(c).strip().upper() for c in df.columns]
-                    except: st.error("File error.")
+                        
+                        # Find the Best Match for Name
+                        name_cols = ['NAME', 'FIRST NAME', 'FULL NAME', 'CONTACT', 'LEAD NAME']
+                        for col in name_cols:
+                            if col in df.columns:
+                                df = df.rename(columns={col: 'FINAL_NAME'})
+                                break
+                        
+                        # Find the Best Match for Email
+                        email_cols = ['EMAIL', 'EMAIL ADDRESS', 'MAIL', 'CONTACT EMAIL']
+                        for col in email_cols:
+                            if col in df.columns:
+                                df = df.rename(columns={col: 'FINAL_EMAIL'})
+                                break
+                    except: st.error("File loading error.")
                 
                 st.session_state.clients[c_name] = {
                     "desc": c_desc, "strategy": c_strat, "offer": c_off,
                     "leads": df, "email": {"user": c_email, "pass": c_pass, "host": "smtp.gmail.com" if "gmail" in c_email else "smtp.office365.com"},
-                    "send_log": [],
-                    "last_run_time": None 
+                    "send_log": [], "last_run_time": None 
                 }
                 save_data()
-                st.success(f"Folder for {c_name} is ready.")
+                st.success(f"Profile {c_name} saved.")
 
     with col_b:
         st.subheader("Active Client Folders")
         for name, data in st.session_state.clients.items():
             with st.expander(f"📂 {name}"):
                 if st.button(f"⚡ Instant Send: {name}"):
-                    for i, row in data['leads'].iterrows():
-                        # Smarter Column Detection
-                        email = row.get('EMAIL', row.get('EMAIL ADDRESS'))
-                        name_lead = row.get('NAME', row.get('FIRST NAME', row.get('FULL NAME', 'Target')))
-                        
-                        res = send_ai_email(data, name, name_lead, email, groq_key)
-                        data["send_log"].append({"Time": datetime.now().strftime("%H:%M"), "Recipient": email, "Name": name_lead, "Status": "Sent" if res==True else res})
-                    save_data()
-                    st.rerun()
+                    leads_df = data['leads']
+                    if 'FINAL_EMAIL' in leads_df.columns:
+                        for i, row in leads_df.iterrows():
+                            # Use the mapped column, or fall back to 'Recipient' if missing
+                            l_email = row['FINAL_EMAIL']
+                            l_name = row.get('FINAL_NAME', 'Target') # Fallback to Target if no name col exists
+                            
+                            res = send_ai_email(data, name, l_name, l_email, groq_key)
+                            data["send_log"].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Recipient": l_email, "Name": l_name, "Status": "Sent" if res==True else res})
+                        save_data()
+                        st.rerun()
+                    else:
+                        st.error("Could not find an 'Email' column in your file.")
 
 with t2:
     if st.session_state.clients:
@@ -150,23 +150,20 @@ with t2:
 if auto_on and groq_key:
     for name, data in st.session_state.clients.items():
         should_send = False
-        if data['last_run_time'] is None:
-            should_send = True
+        if data['last_run_time'] is None: should_send = True
         else:
             last_run = datetime.fromisoformat(data['last_run_time'])
-            if datetime.now() > (last_run + timedelta(days=day_interval)):
-                should_send = True
+            if datetime.now() > (last_run + timedelta(days=day_interval)): should_send = True
         
-        if should_send:
-            for i, row in data['leads'].iterrows():
-                email = row.get('EMAIL', row.get('EMAIL ADDRESS'))
-                name_lead = row.get('NAME', row.get('FIRST NAME', row.get('FULL NAME', 'Target')))
-                if email:
-                    send_ai_email(data, name, name_lead, email, groq_key)
-                    data["send_log"].append({"Time": datetime.now().strftime("%H:%M"), "Recipient": email, "Name": name_lead, "Status": "Auto-Sent ✅"})
-            
-            data['last_run_time'] = datetime.now().isoformat()
-            save_data()
-    
+        if should_send and not data['leads'].empty:
+            leads_df = data['leads']
+            if 'FINAL_EMAIL' in leads_df.columns:
+                for i, row in leads_df.iterrows():
+                    l_email = row['FINAL_EMAIL']
+                    l_name = row.get('FINAL_NAME', 'Target')
+                    send_ai_email(data, name, l_name, l_email, groq_key)
+                    data["send_log"].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Recipient": l_email, "Name": l_name, "Status": "Auto-Sent ✅"})
+                data['last_run_time'] = datetime.now().isoformat()
+                save_data()
     time.sleep(60) 
     st.rerun()
