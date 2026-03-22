@@ -5,11 +5,11 @@ import smtplib
 import time
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# --- 1. DATA PERSISTENCE (FIXED FOR DUPLICATE COLUMNS) ---
+# --- 1. DATA PERSISTENCE ---
 DATA_FILE = "agency_data.json"
 
 def save_data():
@@ -17,7 +17,7 @@ def save_data():
     for name, info in st.session_state.clients.items():
         serializable_data[name] = info.copy()
         if isinstance(info['leads'], pd.DataFrame):
-            # FIX for image_054318.png: Force unique columns before JSON export
+            # Fix for unique columns
             temp_df = info['leads'].copy()
             temp_df.columns = [f"{col}_{i}" if duplicated else col 
                               for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
@@ -37,55 +37,70 @@ def load_data():
 def process_leads(file):
     try:
         df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
+        # Standardize: Remove spaces and make uppercase
         df.columns = [str(c).strip().upper() for c in df.columns]
         
-        # FUZZY MAPPING: Prevents "NaN" by mapping once per category
-        mapping = {"F_NAME": ["NAM"], "F_EMAIL": ["EMAIL"], "F_INFO": ["INFO", "ROLE"], "F_PAIN": ["PAIN", "STRUGGLE"]}
+        # LITERAL MAPPING: No more "fuzzy" guessing that leads to "Terease"
         new_cols = {}
-        used_targets = set()
+        cols = list(df.columns)
         
-        for col in df.columns:
-            for target, keywords in mapping.items():
-                if any(k in col for k in keywords) and target not in used_targets:
-                    new_cols[col] = target
-                    used_targets.add(target)
-                    break
+        # 1. FIND NAME (Priority: Exact match "NAME")
+        if "NAME" in cols: new_cols["NAME"] = "F_NAME"
+        elif "FIRST NAME" in cols: new_cols["FIRST NAME"] = "F_NAME"
         
+        # 2. FIND EMAIL
+        if "EMAIL" in cols: new_cols["EMAIL"] = "F_EMAIL"
+        
+        # 3. FIND INFO/ROLE
+        if "INFORMATION" in cols: new_cols["INFORMATION"] = "F_INFO"
+        elif "ROLE" in cols: new_cols["ROLE"] = "F_INFO"
+
+        # 4. FIND PAINPOINT
+        if "PAINPOINT" in cols: new_cols["PAINPOINT"] = "F_PAIN"
+        elif "PAIN" in cols: new_cols["PAIN"] = "F_PAIN"
+
         df = df.rename(columns=new_cols)
-        # Drop rows missing critical info to prevent "Hi nan"
-        if 'F_EMAIL' in df.columns:
+        
+        # Safety: Drop rows where the mapped Name or Email is empty
+        if "F_NAME" in df.columns:
+            df = df.dropna(subset=['F_NAME'])
+        if "F_EMAIL" in df.columns:
             df = df.dropna(subset=['F_EMAIL'])
+            
         return df
     except Exception as e:
         st.error(f"Spreadsheet Error: {e}")
         return pd.DataFrame()
 
-# --- 2. MAILING ENGINE (ANTI-HALLUCINATION) ---
+# --- 2. MAILING ENGINE ---
 def send_personalized_email(client_info, client_name, lead_name, lead_email, lead_role, lead_pain, groq_key):
     try:
-        # Fallbacks to prevent broken text
-        s_name = "there" if pd.isna(lead_name) or str(lead_name).lower() == 'nan' else str(lead_name)
-        s_role = "Business Owner" if pd.isna(lead_role) or str(lead_role).lower() == 'nan' else str(lead_role)
-        s_pain = "scaling" if pd.isna(lead_pain) or str(lead_pain).lower() == 'nan' else str(lead_pain)
+        # Strict handling of the name to ensure "Tim/Jim" and not "nan"
+        clean_name = str(lead_name).strip()
+        if not clean_name or clean_name.lower() == "nan":
+            clean_name = "there"
 
         client = Groq(api_key=groq_key)
         prompt = f"""
-        Professional cold email from {client_name} to {s_name}.
-        Lead: {s_name} ({s_role}), Struggle: {s_pain}.
+        Write a professional cold email from {client_name} to {clean_name}.
+        Using Lead Name: {clean_name}, Role: {lead_role}, Pain: {lead_pain}.
         Context: {client_info['desc']}. CTA: {client_info['cta_purpose']} ({client_info['cta_link']}).
-        
+
         STRICT RULES:
-        1. NO fake stats/studies (e.g. NO "75% study").
-        2. NO placeholders like [Your Name].
-        3. Sign off ONLY: 'Best regards, {client_name}'.
+        1. Address the lead ONLY as {clean_name}.
+        2. NO invented statistics or studies (NO 75% study).
+        3. NO [Your Name] placeholders.
+        4. Sign off: 'Best regards, {client_name}'.
         """
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
         body = completion.choices[0].message.content
+        
         msg = MIMEMultipart()
         msg['From'] = f"{client_name} <{client_info['email']['user']}>"
         msg['To'] = lead_email
-        msg['Subject'] = f"Question for {s_name}"
+        msg['Subject'] = f"Quick question for {clean_name}"
         msg.attach(MIMEText(body, 'plain'))
+        
         server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls()
         server.login(client_info['email']['user'], client_info['email']['pass'])
         server.send_message(msg); server.quit()
@@ -98,6 +113,7 @@ if 'clients' not in st.session_state:
     st.session_state.clients = {}; load_data()
 
 st.title("📂 Agency Command Center")
+
 t1, t2, t3 = st.tabs(["➕ Add Client", "🗄️ Client Vault", "📜 Master Logs"])
 
 with t1:
@@ -110,7 +126,7 @@ with t1:
         link = c2.text_input("CTA Link")
         purp = c2.text_input("CTA Purpose")
         tone = c2.selectbox("Tone", ["Professional", "Friendly", "Direct"])
-        leads = c2.file_uploader("Leads", type=["csv", "xlsx"])
+        leads = c2.file_uploader("Leads (Columns must be: NAME, EMAIL, INFORMATION, PAINPOINT)", type=["csv", "xlsx"])
         if st.form_submit_button("📁 Save to Vault"):
             df = process_leads(leads) if leads else pd.DataFrame()
             st.session_state.clients[name] = {"desc": desc, "cta_link": link, "cta_purpose": purp, "cta_tone": tone, "leads": df, "email": {"user": email, "pass": pw}, "send_log": []}
@@ -120,7 +136,11 @@ with t2:
     for name, data in list(st.session_state.clients.items()):
         l_count = len(data.get('leads', []))
         with st.expander(f"🏢 {name} | 📊 {l_count} Leads"):
-            st.write(f"**Status Report:** {l_count} leads currently loaded.")
+            
+            # Lead Debugger: Shows user exactly what names were found
+            if l_count > 0:
+                st.write("**Top 3 Names Found:**", ", ".join(data['leads']['F_NAME'].astype(str).head(3).tolist()))
+            
             col1, col2, col3 = st.columns(3)
             if col1.button("🚀 Batch Send", key=f"s_{name}"):
                 if st.session_state.get('g_key'):
@@ -128,18 +148,19 @@ with t2:
                         res = send_personalized_email(data, name, r.get('F_NAME'), r.get('F_EMAIL'), r.get('F_INFO'), r.get('F_PAIN'), st.session_state.g_key)
                         data["send_log"].append({"Time": datetime.now().strftime("%H:%M"), "Recipient": r.get('F_EMAIL'), "Status": "Sent ✅" if res==True else f"Error: {res}"})
                     save_data(); st.rerun()
-                else: st.warning("Enter Groq Key in Sidebar.")
+            
             if col2.button("🗑️ Delete Client", key=f"d_{name}"):
                 del st.session_state.clients[name]; save_data(); st.rerun()
-            
-            # FIXED LEAD UPDATE FORM
-            with st.form(key=f"upd_{name}"):
-                new_file = st.file_uploader("Swap Lead List", type=["csv", "xlsx"])
-                if st.form_submit_button("Update Spreadsheet"):
-                    if new_file:
-                        data['leads'] = process_leads(new_file)
-                        save_data(); st.success("Updated!"); st.rerun()
 
+            # The 2nd Button: Update Only Spreadsheet
+            with st.form(key=f"upd_{name}"):
+                new_f = st.file_uploader("Swap Lead List", type=["csv", "xlsx"])
+                if st.form_submit_button("Update Spreadsheet"):
+                    if new_f:
+                        data['leads'] = process_leads(new_f)
+                        save_data(); st.success("Leads Refreshed!"); st.rerun()
+
+# SIDEBAR REPORTING
 with st.sidebar:
     st.header("⚙️ Dashboard")
     st.session_state.g_key = st.text_input("Groq API Key", type="password")
@@ -151,4 +172,4 @@ with st.sidebar:
         st.metric("Total Leads", t_leads)
         st.metric("Total Sent", t_sent)
         for c_name, c_data in st.session_state.clients.items():
-            st.write(f"- {c_name}: {len(c_data.get('leads', []))} leads")
+            st.write(f"**{c_name}:** {len(c_data.get('leads', []))} leads")
