@@ -10,9 +10,9 @@ from email.mime.multipart import MIMEMultipart
 # --- 1. APP CONFIG & SESSION INITIALIZATION ---
 st.set_page_config(page_title="Agency OS | Multi-Client AI", layout="wide", page_icon="🚀")
 
-# These 'Session States' keep your data alive while the app is running
+# Initialize global storage in session state
 if 'clients' not in st.session_state:
-    st.session_state.clients = {} # {Name: {desc: str, leads: df, email: {}, logs: []}}
+    st.session_state.clients = {} # Structure: {Name: {desc, leads, email_config, logs}}
 if 'active_view' not in st.session_state:
     st.session_state.active_view = None
 
@@ -42,7 +42,22 @@ with t1:
         
         if st.button("Create Client Profile"):
             if new_c_name:
-                df = pd.read_csv(new_leads) if new_leads else pd.DataFrame()
+                df = pd.DataFrame()
+                if new_leads:
+                    # --- THE FIX: Robust CSV/Excel Loading ---
+                    try:
+                        if new_leads.name.endswith('.csv'):
+                            try:
+                                df = pd.read_csv(new_leads)
+                            except UnicodeDecodeError:
+                                new_leads.seek(0)
+                                df = pd.read_csv(new_leads, encoding='latin1')
+                        else:
+                            df = pd.read_excel(new_leads)
+                        st.success(f"Imported {len(df)} leads.")
+                    except Exception as e:
+                        st.error(f"Error loading file: {e}")
+                
                 # Initialize the client structure
                 st.session_state.clients[new_c_name] = {
                     "desc": new_c_desc,
@@ -66,7 +81,7 @@ with t1:
                 st.session_state.clients[sel_client]["email_config"] = {
                     "user": acc_email, "pass": acc_pass, "host": acc_host
                 }
-                st.session_state.clients[sel_client]["logs"].append("Email account linked.")
+                st.session_state.clients[sel_client]["logs"].append(f"Email account ({acc_email}) linked.")
                 st.success(f"Email for {sel_client} is ready.")
 
 # TAB 2: STRATEGY
@@ -78,7 +93,6 @@ with t2:
 # TAB 3: AUTOMATION CENTER
 with t3:
     st.subheader("Live Campaign Monitor")
-    
     left_nav, right_details = st.columns([1, 2])
     
     with left_nav:
@@ -95,16 +109,15 @@ with t3:
             st.markdown(f"## {v_client} Dashboard")
             st.divider()
             
-            # Status Metrics
             m1, m2 = st.columns(2)
             m1.metric("Leads Loaded", len(c_data['leads']))
             m2.metric("Email Status", "Connected" if c_data['email_config'] else "Missing")
             
             st.write(f"**Description:** {c_data['desc']}")
-            
             st.write("#### Live Activity Log")
-            for log_entry in reversed(c_data['logs'][-10:]):
-                st.caption(log_entry)
+            if c_data["logs"]:
+                for log_entry in reversed(c_data['logs'][-15:]):
+                    st.caption(log_entry)
         else:
             st.info("Select a campaign from the left to see live logs.")
 
@@ -112,11 +125,9 @@ with t3:
 if run_automation:
     current_time = datetime.now().strftime("%H:%M:%S")
     for client_name, client_obj in st.session_state.clients.items():
-        # Only run if client has email settings
         if client_obj["email_config"]:
-            # Update logs to show the app is 'Checking'
+            # Simple log pulse to show it's working
             client_obj["logs"].append(f"[{current_time}] Engine pulse: Checking for pending leads...")
     
-    # Wait for the interval (seconds)
-    time.sleep(loop_interval * 5) # For demo, we check every few seconds. Change to * 60 for minutes.
+    time.sleep(loop_interval * 5) # Checks every few seconds for the demo
     st.rerun()
