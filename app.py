@@ -102,20 +102,15 @@ if page == "Create Client":
             app_pw = st.text_input("App Password", type="password")
             tone = st.selectbox("Tone of Voice", ["Professional", "Friendly", "Direct", "Witty"])
             file = st.file_uploader("Upload Leads Spreadsheet (NAME, EMAIL, INFORMATION)", type=["csv", "xlsx"])
-
         with c2:
             st.write("### 🤖 Automation Settings")
             auto_on = st.checkbox("Activate Automated Emails?")
-            
-            # --- CONDITIONAL FIELDS ---
             if auto_on:
                 days = st.number_input("How many days between emails?", min_value=1, value=7)
-                cta_aim = st.text_input("CTA: What should leads do? (e.g. Book a call)")
+                cta_aim = st.text_input("CTA: What should leads do?")
                 cta_link = st.text_input("CTA: Link (if any)")
             else:
-                days = 0
-                cta_aim = ""
-                cta_link = ""
+                days, cta_aim, cta_link = 0, "", ""
 
         if st.form_submit_button("Submit Client"):
             if name and file:
@@ -128,7 +123,7 @@ if page == "Create Client":
                     "leads": df, "send_log": []
                 }
                 save_data()
-                st.success(f"Client {name} successfully stored in Vault!")
+                st.success(f"Client {name} successfully stored!")
 
 # --- PAGE 2: CLIENT VAULT ---
 elif page == "Client Vault":
@@ -138,61 +133,65 @@ elif page == "Client Vault":
             tab_edit, tab_auto, tab_manual = st.tabs(["✏️ Edit Info", "🤖 Automation", "🚀 Manual Send"])
             
             with tab_edit:
-                new_desc = st.text_area("Description", value=c_data['desc'], key=f"ed_{c_name}")
-                if st.button("Save Info", key=f"save_{c_name}"):
-                    c_data['desc'] = new_desc
-                    save_data(); st.rerun()
+                # NEW: Full Edit Capability
+                edit_name = st.text_input("Business Name", value=c_data['name'], key=f"nm_{c_name}")
+                edit_desc = st.text_area("Description", value=c_data['desc'], key=f"ed_{c_name}")
+                edit_email = st.text_input("Email", value=c_data['email'], key=f"em_{c_name}")
+                edit_pw = st.text_input("App Password", value=c_data['app_pw'], type="password", key=f"pw_{c_name}")
+                
+                if st.button("Update Client Profile", key=f"save_{c_name}"):
+                    # Update data
+                    c_data['name'] = edit_name
+                    c_data['desc'] = edit_desc
+                    c_data['email'] = edit_email
+                    c_data['app_pw'] = edit_pw
+                    # If name changed, we update the key in the session state
+                    if edit_name != c_name:
+                        st.session_state.clients[edit_name] = st.session_state.clients.pop(c_name)
+                    save_data()
+                    st.success("Profile Updated!")
+                    st.rerun()
+                
                 if st.button("Delete Client", key=f"del_{c_name}"):
                     del st.session_state.clients[c_name]; save_data(); st.rerun()
 
             with tab_auto:
                 c_data['auto_on'] = st.toggle("Enable Automation", value=c_data['auto_on'], key=f"tog_{c_name}")
                 if c_data['auto_on']:
-                    st.write(f"📅 Next Send Scheduled: {c_data['next_send']}")
-                    st.write(f"⏱️ Frequency: Every {c_data['auto_days']} days")
-                if st.button("Update Automation Status", key=f"up_auto_{c_name}"):
-                    save_data(); st.success("Automation status updated.")
+                    st.write(f"📅 Next Send: {c_data['next_send']}")
+                if st.button("Save Automation Change", key=f"up_auto_{c_name}"):
+                    save_data(); st.success("Saved.")
 
             with tab_manual:
                 method = st.radio("Writing Method", ["Freehand", "Use Framework"], key=f"meth_{c_name}")
-                framework = None
-                if method == "Use Framework":
-                    framework = st.text_area("Paste Framework here", key=f"frame_{c_name}")
-                
-                m_aim = st.text_input("Aim of this email", value=c_data['cta_aim'], key=f"maim_{c_name}")
+                framework = st.text_area("Paste Framework", key=f"fr_{c_name}") if method == "Use Framework" else None
+                m_aim = st.text_input("Aim", value=c_data['cta_aim'], key=f"maim_{c_name}")
                 m_link = st.text_input("Link", value=c_data['cta_link'], key=f"mlink_{c_name}")
                 
-                if st.button("🔥 Send Batch Now", key=f"send_{c_name}"):
+                if st.button("🔥 Send Batch", key=f"send_{c_name}"):
                     if st.session_state.g_key:
                         for _, lead in c_data['leads'].iterrows():
                             res = send_email_logic(c_data, lead, st.session_state.g_key, framework, {"aim": m_aim, "link": m_link})
                             c_data['send_log'].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Lead": lead['F_EMAIL'], "Status": "Success" if res==True else f"Error: {res}"})
                         save_data(); st.success("Batch Sent!"); st.rerun()
-                    else: st.warning("Enter Groq Key in Sidebar")
+                    else: st.warning("Need Groq Key")
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
-    st.header("📜 Global Email History")
+    st.header("📜 History")
     all_logs = []
     for c_name, c_data in st.session_state.clients.items():
         for entry in c_data['send_log']:
-            log_entry = entry.copy()
-            log_entry['Client'] = c_name
+            log_entry = entry.copy(); log_entry['Client'] = c_name
             all_logs.append(log_entry)
-    if all_logs:
-        st.dataframe(pd.DataFrame(all_logs), use_container_width=True)
-    else:
-        st.info("No emails have been sent yet.")
+    if all_logs: st.dataframe(pd.DataFrame(all_logs), use_container_width=True)
+    else: st.info("No logs.")
 
 # --- PAGE 4: STATISTICS ---
 elif page == "Statistics":
-    st.header("📊 Agency Statistics")
+    st.header("📊 Stats")
     col1, col2 = st.columns(2)
-    col1.metric("Total Clients", len(st.session_state.clients))
-    col2.metric("Total Emails Sent", sum(len(c['send_log']) for c in st.session_state.clients.values()))
-    st.divider()
+    col1.metric("Clients", len(st.session_state.clients))
+    col2.metric("Total Sent", sum(len(c['send_log']) for c in st.session_state.clients.values()))
     for c_name, c_data in st.session_state.clients.items():
-        st.subheader(f"Client: {c_name}")
-        sc1, sc2 = st.columns(2)
-        sc1.metric("Leads in Database", len(c_data['leads']))
-        sc2.metric("Emails Sent", len(c_data['send_log']))
+        st.subheader(f"{c_name}: {len(c_data['leads'])} Leads | {len(c_data['send_log'])} Sent")
