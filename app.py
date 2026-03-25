@@ -93,6 +93,16 @@ with st.sidebar:
     t_leads = sum(len(c.get('leads', [])) for c in st.session_state.clients.values())
     t_sent = sum(len(c.get('send_log', [])) for c in st.session_state.clients.values())
     st.metric("Total Leads", t_leads); st.metric("Total Sent", t_sent)
+    # Add this to the 'with st.sidebar:' section
+    st.divider()
+    st.write("### 💾 Backup Data")
+    with open("agency_database.json", "r") as f:
+        st.download_button(
+            label="Download Database",
+            data=f,
+            file_name="agency_database.json",
+            mime="application/json"
+        )
 
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
