@@ -131,19 +131,13 @@ with st.sidebar:
     page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs", "Statistics"])
     
     st.divider()
-    st.write("### 🔄 Sync Tracker Data")
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            st.download_button("Step 1: Download to Computer", f, "agency_database.json", "application/json")
-    
-    uploaded_sync = st.file_uploader("Step 2: Upload from PythonAnywhere", type="json")
-    if uploaded_sync:
-        if st.button("Confirm Sync Update"):
-            new_data = json.load(uploaded_sync)
-            for name, info in new_data.items():
-                if isinstance(info['leads'], str): info['leads'] = pd.read_json(info['leads'])
-                st.session_state.clients[name] = info
-            save_data(); st.success("Sync Complete!"); st.rerun()
+    st.write("### 🔄 Auto-Sync")
+    if st.button("🔄 Sync Click Counts"):
+        if sync_from_tracker():
+            st.success("Clicks Updated!")
+            st.rerun()
+        else:
+            st.error("Could not reach Tracker.")
 
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
