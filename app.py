@@ -169,16 +169,33 @@ elif page == "Client Vault":
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
     st.header("📜 Email History")
+    
+    if st.button("🗑️ Clear All Logs"):
+        for c in st.session_state.clients.values():
+            c['send_log'] = []
+        save_data()
+        st.rerun()
+
     all_logs = []
-    for c_data in st.session_state.clients.values():
-        for entry in c_data['send_log']:
-            all_logs.append(entry)
+    for c_name, c_data in st.session_state.clients.items():
+        for entry in c_data.get('send_log', []):
+            # This line ensures every log entry has a 'Client' name
+            log_entry = entry.copy()
+            if 'Client' not in log_entry:
+                log_entry['Client'] = c_name
+            all_logs.append(log_entry)
+            
     if all_logs:
         df_logs = pd.DataFrame(all_logs)
-        # Reorder columns so Client is first
-        cols = ['Client', 'Time', 'Lead', 'Status']
-        st.dataframe(df_logs[cols], use_container_width=True)
-
+        
+        # This list defines the order we WANT, but checks if they exist first
+        desired_cols = ['Client', 'Time', 'Lead', 'Status']
+        # Only show columns that actually exist in the data to prevent KeyError
+        existing_cols = [c for c in desired_cols if c in df_logs.columns]
+        
+        st.dataframe(df_logs[existing_cols], use_container_width=True)
+    else:
+        st.info("No emails have been sent yet.")
 # --- PAGE 4: STATISTICS ---
 elif page == "Statistics":
     st.header("📊 Click Performance")
