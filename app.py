@@ -17,7 +17,7 @@ def save_data():
         serializable[name] = info.copy()
         if isinstance(info['leads'], pd.DataFrame):
             temp_df = info['leads'].copy()
-            # Fix for duplicate columns causing ValueError
+            # Fix for duplicate columns
             temp_df.columns = [f"{col}_{i}" if duplicated else col 
                               for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
             serializable[name]['leads'] = temp_df.to_json()
@@ -41,13 +41,11 @@ if 'clients' not in st.session_state:
 def process_spreadsheet(file):
     try:
         df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
-        # Drop entirely empty columns (A, B, C) to find real data
-        df = df.dropna(axis=1, how='all')
+        df = df.dropna(axis=1, how='all') # Clean empty A, B, C cols
         df.columns = [str(c).strip().upper() for c in df.columns]
         mapping = {"NAME": "F_NAME", "EMAIL": "F_EMAIL", "INFORMATION": "F_INFO"}
         df = df.rename(columns=mapping)
         if "F_NAME" in df.columns:
-            # Drop rows where Name is missing to avoid "nan" displays
             df = df.dropna(subset=['F_NAME'])
         return df
     except Exception as e:
@@ -59,13 +57,17 @@ def send_email_logic(client_info, lead, groq_key, framework=None, cta_details=No
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
         mode_text = f"Use this framework: {framework}" if framework else "Write freehand."
+        
+        # Click Tracking URL logic placeholder
+        # tracking_url = f"https://your-server.com/click/{client_info['name']}/{lead['F_EMAIL']}"
+        
         prompt = f"""
         {mode_text}
         From: {client_info['name']} to {s_name}.
         Lead Info: {lead.get('F_INFO', 'Business owner')}.
         Client Biz: {client_info['desc']}.
         Goal: {cta_details['aim']}. Link: {cta_details['link']}. Tone: {client_info.get('tone', 'Professional')}.
-        RULES: 1. Address as 'Hi {s_name},'. 2. NO fake stats. 3. Sign off: Best regards, {client_info['name']}.
+        RULES: 1. Hi {s_name}, 2. NO fake stats. 3. Sign off: Best regards, {client_info['name']}.
         """
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
         body = completion.choices[0].message.content
@@ -84,18 +86,17 @@ def send_email_logic(client_info, lead, groq_key, framework=None, cta_details=No
 st.set_page_config(page_title="Agency Pro", layout="wide")
 
 with st.sidebar:
-    st.title("Command Center")
+    st.title("⚙️ Command Center")
     st.session_state.g_key = st.text_input("GROQ API Key", type="password")
     page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs", "Statistics"])
     st.divider()
     t_leads = sum(len(c.get('leads', [])) for c in st.session_state.clients.values())
     t_sent = sum(len(c.get('send_log', [])) for c in st.session_state.clients.values())
-    st.metric("Total Leads", t_leads)
-    st.metric("Total Sent", t_sent)
+    st.metric("Total Leads", t_leads); st.metric("Total Sent", t_sent)
 
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
-    st.header("Create New Client")
+    st.header("➕ Create New Client")
     with st.form("create_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
@@ -106,14 +107,13 @@ if page == "Create Client":
             tone = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"])
             file = st.file_uploader("Leads Spreadsheet", type=["csv", "xlsx"])
         with c2:
-            st.write("### Automation Settings")
+            st.write("### 🤖 Automation Settings")
             auto_on = st.checkbox("Activate Automated Emails?")
             if auto_on:
                 days = st.number_input("Days between emails", min_value=1, value=7)
-                cta_aim = st.text_input("CTA: What should leads do?")
-                cta_link = st.text_input("CTA: Link")
-            else:
-                days, cta_aim, cta_link = 0, "", ""
+                cta_aim = st.text_input("CTA Goal")
+                cta_link = st.text_input("CTA Link")
+            else: days, cta_aim, cta_link = 0, "", ""
 
         if st.form_submit_button("Submit Client"):
             if name and file:
@@ -123,46 +123,48 @@ if page == "Create Client":
                     "auto_on": auto_on, "auto_days": days, 
                     "next_send": (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d") if auto_on else "N/A",
                     "cta_aim": cta_aim, "cta_link": cta_link, "tone": tone,
-                    "leads": df, "send_log": []
+                    "leads": df, "send_log": [], "clicks": 0 # Track clicks here
                 }
-                save_data()
-                st.success(f"Client {name} saved!")
+                save_data(); st.success(f"Client {name} saved!")
 
 # --- PAGE 2: CLIENT VAULT ---
 elif page == "Client Vault":
-    st.header("Client Vault")
+    st.header("🗄️ Client Vault")
     for c_name, c_data in list(st.session_state.clients.items()):
-        with st.expander(f"{c_name} |  {len(c_data['leads'])} Leads"):
-            tab_edit, tab_auto, tab_manual = st.tabs(["Edit Profile", "Automation", "Manual Send"])
+        with st.expander(f"🏢 {c_name} | 👥 {len(c_data['leads'])} Leads"):
+            tab_edit, tab_auto, tab_manual = st.tabs(["✏️ Edit Profile", "🤖 Automation", "🚀 Manual Send"])
             
             with tab_edit:
                 edit_name = st.text_input("Name", value=c_data['name'], key=f"nm_{c_name}")
                 edit_desc = st.text_area("Description", value=c_data['desc'], key=f"ed_{c_name}")
                 edit_email = st.text_input("Email", value=c_data['email'], key=f"em_{c_name}")
                 edit_pw = st.text_input("App Password", value=c_data['app_pw'], type="password", key=f"pw_{c_name}")
-                if st.button("Update Profile", key=f"save_{c_name}"):
+                
+                # NEW: Update Leads Spreadsheet
+                st.write("---")
+                new_file = st.file_uploader("Replace Lead List (Optional)", type=["csv", "xlsx"], key=f"f_{c_name}")
+                
+                if st.button("Save Changes", key=f"save_{c_name}"):
                     c_data.update({"name": edit_name, "desc": edit_desc, "email": edit_email, "app_pw": edit_pw})
+                    if new_file:
+                        c_data['leads'] = process_spreadsheet(new_file)
                     if edit_name != c_name: st.session_state.clients[edit_name] = st.session_state.clients.pop(c_name)
                     save_data(); st.rerun()
-                if st.button("Delete Client", key=f"del_{c_name}"):
-                    del st.session_state.clients[c_name]; save_data(); st.rerun()
 
             with tab_auto:
                 c_data['auto_on'] = st.toggle("Enable Automation", value=c_data['auto_on'], key=f"tog_{c_name}")
-                # FIX: Added max(1, ...) to prevent ValueBelowMinError
+                # ValueBelowMin Fix
                 new_days = st.number_input("Days between emails", min_value=1, value=max(1, int(c_data.get('auto_days', 7))), key=f"day_{c_name}")
-                if c_data['auto_on']:
-                    st.write(f"Next Send: {c_data['next_send']}")
-                if st.button("Update Automation Frequency", key=f"up_f_{c_name}"):
+                if st.button("Save Automation", key=f"up_f_{c_name}"):
                     c_data['auto_days'] = new_days
-                    save_data(); st.success("Frequency Updated!")
+                    save_data(); st.success("Saved.")
 
             with tab_manual:
-                method = st.radio("Writing Method", ["Freehand", "Use Framework"], key=f"meth_{c_name}")
-                framework = st.text_area("Paste Framework", key=f"fr_{c_name}") if method == "Use Framework" else None
+                method = st.radio("Method", ["Freehand", "Framework"], key=f"m_{c_name}")
+                framework = st.text_area("Framework", key=f"fr_{c_name}") if method == "Framework" else None
                 m_aim = st.text_input("Aim", value=c_data['cta_aim'], key=f"maim_{c_name}")
                 m_link = st.text_input("Link", value=c_data['cta_link'], key=f"mlink_{c_name}")
-                if st.button("Send Batch", key=f"send_{c_name}"):
+                if st.button("🔥 Send Batch", key=f"send_{c_name}"):
                     if st.session_state.g_key:
                         for _, lead in c_data['leads'].iterrows():
                             res = send_email_logic(c_data, lead, st.session_state.g_key, framework, {"aim": m_aim, "link": m_link})
@@ -171,8 +173,8 @@ elif page == "Client Vault":
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
-    st.header("Global History")
-    if st.button("Clear All History"):
+    st.header("📜 History")
+    if st.button("🗑️ Clear All Logs"):
         for c in st.session_state.clients.values(): c['send_log'] = []
         save_data(); st.rerun()
     all_logs = []
@@ -184,9 +186,15 @@ elif page == "Email Logs":
 
 # --- PAGE 4: STATISTICS ---
 elif page == "Statistics":
-    st.header("Stats")
-    col1, col2 = st.columns(2)
-    col1.metric("Total Clients", len(st.session_state.clients))
-    col2.metric("Total Sent", sum(len(c['send_log']) for c in st.session_state.clients.values()))
+    st.header("📊 Performance Stats")
     for c_name, c_data in st.session_state.clients.items():
-        st.subheader(f"{c_name}: {len(c_data['leads'])} Leads | {len(c_data['send_log'])} Sent")
+        sent = len(c_data['send_log'])
+        clicks = c_data.get('clicks', 0)
+        rate = (clicks / sent * 100) if sent > 0 else 0
+        
+        st.subheader(f"🏢 {c_name}")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Emails Sent", sent)
+        col2.metric("Clicks Tracking", clicks)
+        col3.metric("Click-Through Rate", f"{rate:.1f}%")
+        st.divider()
