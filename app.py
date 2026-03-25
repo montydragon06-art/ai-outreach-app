@@ -4,13 +4,15 @@ from groq import Groq
 import smtplib
 import json
 import os
-from datetime import datetime, timedelta
+import requests
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import requests # Add this to your imports at the top!
 
+# --- 1. CONFIGURATION & SYNC ---
+DATA_FILE = "agency_database.json"
 PA_URL = "https://mwilden.pythonanywhere.com"
-PA_PW = "agency123"
+PA_PW = "agency123" 
 
 def save_data():
     serializable = {}
@@ -18,53 +20,41 @@ def save_data():
         serializable[name] = info.copy()
         if isinstance(info['leads'], pd.DataFrame):
             temp_df = info['leads'].copy()
-            temp_df.columns = [f"{col}_{i}" if duplicated else col for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
+            # Handle duplicate columns for JSON safety
+            temp_df.columns = [f"{col}_{i}" if duplicated else col 
+                              for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
             serializable[name]['leads'] = temp_df.to_json()
     
-    # Save locally
+    # Save Locally
     with open(DATA_FILE, "w") as f:
         json.dump(serializable, f)
     
-    # AUTO-SYNC: Send to PythonAnywhere
+    # Auto-Push to PythonAnywhere
     try:
-        requests.post(f"{PA_URL}/update_db", json=serializable, headers={"Authorization": PA_PW})
+        requests.post(f"{PA_URL}/update_db", json=serializable, headers={"Authorization": PA_PW}, timeout=5)
     except:
-        pass # If tracker is down, it just saves locally
+        pass
 
 def sync_from_tracker():
     try:
-        response = requests.get(f"{PA_URL}/get_db", headers={"Authorization": PA_PW})
+        response = requests.get(f"{PA_URL}/get_db", headers={"Authorization": PA_PW}, timeout=10)
         if response.status_code == 200:
             new_data = response.json()
             for name, info in new_data.items():
                 if isinstance(info['leads'], str):
                     info['leads'] = pd.read_json(info['leads'])
                 st.session_state.clients[name] = info
-            # Save the new click counts locally
             with open(DATA_FILE, "w") as f:
                 json.dump(new_data, f)
-            return True
-    except:
-        return False
+            return True, "Success"
+        else:
+            return False, f"Server Error: {response.status_code} (Check Password)"
+    except Exception as e:
+        return False, f"Connection Error: {str(e)}"
 
-
-
-# --- 1. DATA & SESSION INITIALIZATION ---
-DATA_FILE = "agency_database.json"
-
-def save_data():
-    serializable = {}
-    for name, info in st.session_state.clients.items():
-        serializable[name] = info.copy()
-        if isinstance(info['leads'], pd.DataFrame):
-            temp_df = info['leads'].copy()
-            temp_df.columns = [f"{col}_{i}" if duplicated else col 
-                              for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
-            serializable[name]['leads'] = temp_df.to_json()
-    with open(DATA_FILE, "w") as f:
-        json.dump(serializable, f)
-
-def load_data():
+# --- 2. DATA INITIALIZATION ---
+if 'clients' not in st.session_state:
+    st.session_state.clients = {}
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
             raw = json.load(f)
@@ -73,11 +63,7 @@ def load_data():
                     info['leads'] = pd.read_json(info['leads'])
                 st.session_state.clients[name] = info
 
-if 'clients' not in st.session_state:
-    st.session_state.clients = {}
-    load_data()
-
-# --- 2. CORE FUNCTIONS ---
+# --- 3. CORE FUNCTIONS ---
 def process_spreadsheet(file):
     try:
         df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
@@ -85,23 +71,17 @@ def process_spreadsheet(file):
         df.columns = [str(c).strip().upper() for c in df.columns]
         mapping = {"NAME": "F_NAME", "EMAIL": "F_EMAIL", "INFORMATION": "F_INFO"}
         df = df.rename(columns=mapping)
-        if "F_NAME" in df.columns:
-            df = df.dropna(subset=['F_NAME'])
-        return df
+        return df.dropna(subset=['F_NAME']) if "F_NAME" in df.columns else df
     except Exception as e:
         st.error(f"File Error: {e}"); return pd.DataFrame()
 
-def send_email_logic(client_info, lead, groq_key, framework=None, cta_details=None):
+def send_email_logic(client_info, lead, groq_key, cta_details):
     try:
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
+        tracking_url = f"{PA_URL}/click/{client_info['name']}"
         
-        # --- TRACKER LINK ---
-        tracking_url = f"https://mwilden.pythonanywhere.com/click/{client_info['name']}"
-        
-        mode_text = f"Use this framework: {framework}" if framework else "Write freehand."
         prompt = f"""
-        {mode_text}
         From: {client_info['name']} to {s_name}.
         Lead Info: {lead.get('F_INFO', 'Business owner')}.
         Client Biz: {client_info['desc']}.
@@ -122,7 +102,7 @@ def send_email_logic(client_info, lead, groq_key, framework=None, cta_details=No
         return True
     except Exception as e: return str(e)
 
-# --- 3. UI NAVIGATION ---
+# --- 4. UI NAVIGATION ---
 st.set_page_config(page_title="Agency Pro", layout="wide")
 
 with st.sidebar:
@@ -133,11 +113,12 @@ with st.sidebar:
     st.divider()
     st.write("### 🔄 Auto-Sync")
     if st.button("🔄 Sync Click Counts"):
-        if sync_from_tracker():
+        success, msg = sync_from_tracker()
+        if success:
             st.success("Clicks Updated!")
             st.rerun()
         else:
-            st.error("Could not reach Tracker.")
+            st.error(msg)
 
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
@@ -179,63 +160,48 @@ elif page == "Client Vault":
                 c_data['desc'] = st.text_area("Description", c_data['desc'], key=f"d_{c_name}")
                 c_data['email'] = st.text_input("Sender Email", c_data['email'], key=f"e_{c_name}")
                 c_data['app_pw'] = st.text_input("App PW", c_data['app_pw'], type="password", key=f"p_{c_name}")
-                c_data['tone'] = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"], index=0, key=f"t_{c_name}")
-                new_file = st.file_uploader("Replace Lead List", type=["csv", "xlsx"], key=f"f_{c_name}")
+                c_data['tone'] = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"], key=f"t_{c_name}")
                 if st.button("Save Profile Changes", key=f"save_{c_name}"):
-                    if new_file: c_data['leads'] = process_spreadsheet(new_file)
-                    save_data(); st.rerun()
+                    save_data(); st.success("Profile Updated!"); st.rerun()
 
             with t2:
                 c_data['auto_on'] = st.toggle("Automation Active", c_data['auto_on'], key=f"at_{c_name}")
                 c_data['auto_days'] = st.number_input("Interval (Days)", 1, 30, int(c_data['auto_days']), key=f"ad_{c_name}")
                 c_data['cta_aim'] = st.text_input("Auto CTA Goal", c_data['cta_aim'], key=f"aa_{c_name}")
                 c_data['cta_link'] = st.text_input("Auto CTA Link", c_data['cta_link'], key=f"al_{c_name}")
-                if st.button("Update Automation", key=f"ua_{c_name}"): save_data(); st.success("Updated")
+                if st.button("Update Automation", key=f"ua_{c_name}"): save_data(); st.success("Automation Updated")
 
             with t3:
-                m_aim = st.text_input("Manual Goal", c_data['cta_aim'], key=f"ma_{c_name}")
-                m_link = st.text_input("Manual Link", c_data['cta_link'], key=f"ml_{c_name}")
+                m_aim = st.text_input("Manual Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
+                m_link = st.text_input("Manual Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
                 if st.button("🔥 Start Batch", key=f"sb_{c_name}"):
                     for _, lead in c_data['leads'].iterrows():
-                        res = send_email_logic(c_data, lead, st.session_state.g_key, None, {"aim": m_aim, "link": m_link})
-                        c_data['send_log'].append({"Client": c_name, "Time": datetime.now().strftime("%Y-%m-%d"), "Lead": lead['F_EMAIL'], "Status": "Success" if res==True else res})
+                        res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim, "link": m_link})
+                        c_data['send_log'].append({"Client": c_name, "Time": datetime.now().strftime("%Y-%m-%d"), "Lead": lead.get('F_EMAIL', 'N/A'), "Status": "Success" if res==True else res})
                     save_data(); st.rerun()
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
     st.header("📜 Email History")
-    
-    if st.button("🗑️ Clear All Logs"):
-        for c in st.session_state.clients.values():
-            c['send_log'] = []
-        save_data()
-        st.rerun()
-
     all_logs = []
     for c_name, c_data in st.session_state.clients.items():
         for entry in c_data.get('send_log', []):
-            # This line ensures every log entry has a 'Client' name
-            log_entry = entry.copy()
-            if 'Client' not in log_entry:
-                log_entry['Client'] = c_name
-            all_logs.append(log_entry)
+            log_item = entry.copy()
+            if 'Client' not in log_item: log_item['Client'] = c_name
+            all_logs.append(log_item)
             
     if all_logs:
         df_logs = pd.DataFrame(all_logs)
-        
-        # This list defines the order we WANT, but checks if they exist first
-        desired_cols = ['Client', 'Time', 'Lead', 'Status']
-        # Only show columns that actually exist in the data to prevent KeyError
-        existing_cols = [c for c in desired_cols if c in df_logs.columns]
-        
-        st.dataframe(df_logs[existing_cols], use_container_width=True)
+        cols = [c for c in ['Client', 'Time', 'Lead', 'Status'] if c in df_logs.columns]
+        st.dataframe(df_logs[cols], use_container_width=True)
     else:
-        st.info("No emails have been sent yet.")
+        st.info("No emails sent yet.")
+
 # --- PAGE 4: STATISTICS ---
 elif page == "Statistics":
     st.header("📊 Click Performance")
     for c_name, c_data in st.session_state.clients.items():
-        sent = len(c_data['send_log'])
+        sent = len(c_data.get('send_log', []))
         clicks = c_data.get('clicks', 0)
         rate = (clicks / sent * 100) if sent > 0 else 0
         st.subheader(f"Client: {c_name}")
