@@ -49,24 +49,26 @@ def process_spreadsheet(file):
             df = df.dropna(subset=['F_NAME'])
         return df
     except Exception as e:
-        st.error(f"File Error: {e}")
-        return pd.DataFrame()
+        st.error(f"File Error: {e}"); return pd.DataFrame()
 
 def send_email_logic(client_info, lead, groq_key, framework=None, cta_details=None):
     try:
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
+        
+        # --- INTEGRATED TRACKER LINK ---
+        # REPLACE 'yourusername' with your actual PythonAnywhere username
+        tracking_url = f"https://yourusername.pythonanywhere.com/click/{client_info['name']}"
+        
         mode_text = f"Use this framework: {framework}" if framework else "Write freehand."
-        
-        # Click Tracking URL logic placeholder
-        # tracking_url = f"https://your-server.com/click/{client_info['name']}/{lead['F_EMAIL']}"
-        
         prompt = f"""
         {mode_text}
         From: {client_info['name']} to {s_name}.
         Lead Info: {lead.get('F_INFO', 'Business owner')}.
         Client Biz: {client_info['desc']}.
-        Goal: {cta_details['aim']}. Link: {cta_details['link']}. Tone: {client_info.get('tone', 'Professional')}.
+        Goal: {cta_details['aim']}. 
+        STRICT RULE: You MUST use this EXACT link for the Call to Action: {tracking_url}
+        Tone: {client_info.get('tone', 'Professional')}.
         RULES: 1. Hi {s_name}, 2. NO fake stats. 3. Sign off: Best regards, {client_info['name']}.
         """
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
@@ -89,20 +91,27 @@ with st.sidebar:
     st.title("⚙️ Command Center")
     st.session_state.g_key = st.text_input("GROQ API Key", type="password")
     page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs", "Statistics"])
+    
     st.divider()
     t_leads = sum(len(c.get('leads', [])) for c in st.session_state.clients.values())
     t_sent = sum(len(c.get('send_log', [])) for c in st.session_state.clients.values())
-    st.metric("Total Leads", t_leads); st.metric("Total Sent", t_sent)
-    # Add this to the 'with st.sidebar:' section
+    st.metric("Total Leads", t_leads)
+    st.metric("Total Sent", t_sent)
+
+    # --- INTEGRATED DOWNLOAD FEATURE ---
     st.divider()
-    st.write("### 💾 Backup Data")
-    with open("agency_database.json", "r") as f:
-        st.download_button(
-            label="Download Database",
-            data=f,
-            file_name="agency_database.json",
-            mime="application/json"
-        )
+    st.write("### 💾 Data Management")
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            st.download_button(
+                label="Download Database (For Tracker)",
+                data=f,
+                file_name="agency_database.json",
+                mime="application/json",
+                key="sidebar_download"
+            )
+    else:
+        st.caption("No database found yet. Create a client first.")
 
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
@@ -122,7 +131,7 @@ if page == "Create Client":
             if auto_on:
                 days = st.number_input("Days between emails", min_value=1, value=7)
                 cta_aim = st.text_input("CTA Goal")
-                cta_link = st.text_input("CTA Link")
+                cta_link = st.text_input("CTA Link (Final Destination)")
             else: days, cta_aim, cta_link = 0, "", ""
 
         if st.form_submit_button("Submit Client"):
@@ -133,7 +142,7 @@ if page == "Create Client":
                     "auto_on": auto_on, "auto_days": days, 
                     "next_send": (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d") if auto_on else "N/A",
                     "cta_aim": cta_aim, "cta_link": cta_link, "tone": tone,
-                    "leads": df, "send_log": [], "clicks": 0 # Track clicks here
+                    "leads": df, "send_log": [], "clicks": 0 
                 }
                 save_data(); st.success(f"Client {name} saved!")
 
@@ -150,7 +159,6 @@ elif page == "Client Vault":
                 edit_email = st.text_input("Email", value=c_data['email'], key=f"em_{c_name}")
                 edit_pw = st.text_input("App Password", value=c_data['app_pw'], type="password", key=f"pw_{c_name}")
                 
-                # NEW: Update Leads Spreadsheet
                 st.write("---")
                 new_file = st.file_uploader("Replace Lead List (Optional)", type=["csv", "xlsx"], key=f"f_{c_name}")
                 
@@ -160,6 +168,8 @@ elif page == "Client Vault":
                         c_data['leads'] = process_spreadsheet(new_file)
                     if edit_name != c_name: st.session_state.clients[edit_name] = st.session_state.clients.pop(c_name)
                     save_data(); st.rerun()
+                if st.button("Delete Client", key=f"del_{c_name}"):
+                    del st.session_state.clients[c_name]; save_data(); st.rerun()
 
             with tab_auto:
                 c_data['auto_on'] = st.toggle("Enable Automation", value=c_data['auto_on'], key=f"tog_{c_name}")
@@ -183,7 +193,7 @@ elif page == "Client Vault":
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
-    st.header("📜 History")
+    st.header("📜 Global History")
     if st.button("🗑️ Clear All Logs"):
         for c in st.session_state.clients.values(): c['send_log'] = []
         save_data(); st.rerun()
@@ -205,6 +215,6 @@ elif page == "Statistics":
         st.subheader(f"🏢 {c_name}")
         col1, col2, col3 = st.columns(3)
         col1.metric("Emails Sent", sent)
-        col2.metric("Clicks Tracking", clicks)
+        col2.metric("Clicks Received", clicks)
         col3.metric("Click-Through Rate", f"{rate:.1f}%")
         st.divider()
