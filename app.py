@@ -7,6 +7,47 @@ import os
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import requests # Add this to your imports at the top!
+
+PA_URL = "https://mwilden.pythonanywhere.com"
+PA_PW = "your_secret_password"
+
+def save_data():
+    serializable = {}
+    for name, info in st.session_state.clients.items():
+        serializable[name] = info.copy()
+        if isinstance(info['leads'], pd.DataFrame):
+            temp_df = info['leads'].copy()
+            temp_df.columns = [f"{col}_{i}" if duplicated else col for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
+            serializable[name]['leads'] = temp_df.to_json()
+    
+    # Save locally
+    with open(DATA_FILE, "w") as f:
+        json.dump(serializable, f)
+    
+    # AUTO-SYNC: Send to PythonAnywhere
+    try:
+        requests.post(f"{PA_URL}/update_db", json=serializable, headers={"Authorization": PA_PW})
+    except:
+        pass # If tracker is down, it just saves locally
+
+def sync_from_tracker():
+    try:
+        response = requests.get(f"{PA_URL}/get_db", headers={"Authorization": PA_PW})
+        if response.status_code == 200:
+            new_data = response.json()
+            for name, info in new_data.items():
+                if isinstance(info['leads'], str):
+                    info['leads'] = pd.read_json(info['leads'])
+                st.session_state.clients[name] = info
+            # Save the new click counts locally
+            with open(DATA_FILE, "w") as f:
+                json.dump(new_data, f)
+            return True
+    except:
+        return False
+
+
 
 # --- 1. DATA & SESSION INITIALIZATION ---
 DATA_FILE = "agency_database.json"
