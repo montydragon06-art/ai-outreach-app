@@ -14,7 +14,7 @@ DATA_FILE = "agency_database.json"
 # Your Google Apps Script Web App URL
 TRACKER_URL = "https://script.google.com/macros/s/AKfycbwopXSz26Lv56blNumGcjFV-M9yCvFCzh6r5SK0dF7rBWDrA2R_3mow0B18JzDtQcfc/exec"
 # Your Google Sheet ID (The long string in the browser URL of your sheet)
-SHEET_ID = "https://docs.google.com/spreadsheets/d/1fqMwLHV51IgbcjHM0y6rLIG1zciLPL7m_Z2gJ4ZA-tk/edit?usp=sharing" 
+SHEET_ID = "1fqMwLHV51IgbcjHM0y6rLIG1zciLPL7m_Z2gJ4ZA-tk"
 
 def save_data():
     serializable = {}
@@ -87,8 +87,8 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         Goal: {cta_details['aim']}. 
         
         STRICT RULE: You must write this email in HTML format. 
-        Wrap the following tracking link inside a professional call-to-action button or link 
-        using an <a href='...'> tag: {tracking_url}
+        Wrap the following tracking link inside a professional call-to-action link 
+        using an <a href='{tracking_url}'>Clickable Text</a> tag.
         
         Tone: {client_info.get('tone', 'Professional')}.
         """
@@ -96,7 +96,7 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         body = completion.choices[0].message.content
         msg = MIMEMultipart(); msg['From'] = f"{client_info['name']} <{client_info['email']}>"
         msg['To'] = lead.get('F_EMAIL'); msg['Subject'] = f"Quick question for {s_name}"
-        msg.attach(MIMEText(body, 'plain'))
+        msg.attach(MIMEText(body, 'html'))
         server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls()
         server.login(client_info['email'], client_info['app_pw'])
         server.send_message(msg); server.quit()
