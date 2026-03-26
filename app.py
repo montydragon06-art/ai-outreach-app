@@ -58,7 +58,7 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
         
-        # This creates the link that Google Sheets tracks
+        # Tracking Link pointed to Google Sheet Script
         tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
         
         prompt = f"""
@@ -86,15 +86,14 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
     except Exception as e: return str(e)
 
 # --- 4. UI NAVIGATION ---
-st.set_page_config(page_title="Agency Pro: Google Edition", layout="wide")
+st.set_page_config(page_title="Agency Pro", layout="wide")
 
 with st.sidebar:
     st.title("⚙️ Command Center")
     st.session_state.g_key = st.text_input("GROQ API Key", type="password")
-    page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs"])
-    
+    page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs", "Statistics"])
     st.divider()
-    st.info("Note: Click counts are now updated automatically in your Google Sheet!")
+    st.info("Clicks are tracked via Google Sheets.")
 
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
@@ -102,63 +101,65 @@ if page == "Create Client":
     with st.form("create_form"):
         c1, c2 = st.columns(2)
         with c1:
-            name = st.text_input("Business Name (Must match Google Sheet exactly)")
+            name = st.text_input("Business Name")
             desc = st.text_area("Business Description")
             b_email = st.text_input("Sender Email")
             app_pw = st.text_input("App Password", type="password")
             tone = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"])
-        with c2:
-            st.write("### 🔗 Tracking Settings")
-            cta_aim = st.text_input("CTA Goal (e.g., Book a meeting)")
-            cta_link = st.text_input("Final Destination URL (The real website)")
             file = st.file_uploader("Leads Spreadsheet", type=["csv", "xlsx"])
+        with c2:
+            st.write("### 🤖 Automation Settings")
+            auto_on = st.checkbox("Enable Automation")
+            days = st.number_input("Days Between", min_value=1, value=7)
+            cta_aim = st.text_input("Default CTA Goal")
+            cta_link = st.text_input("Default CTA Link (Destination)")
 
         if st.form_submit_button("Submit"):
-            if name and file and cta_link:
+            if name and file:
                 df = process_spreadsheet(file)
                 st.session_state.clients[name] = {
                     "name": name, "desc": desc, "email": b_email, "app_pw": app_pw,
-                    "cta_aim": cta_aim, "cta_link": cta_link,
-                    "tone": tone, "leads": df, "send_log": []
+                    "auto_on": auto_on, "auto_days": days, "cta_aim": cta_aim, "cta_link": cta_link,
+                    "tone": tone, "leads": df, "send_log": [], "clicks": 0 
                 }
-                save_data(); st.success(f"Client {name} Saved locally!")
-                st.warning("Don't forget to add this client name to your Google Sheet Row!")
+                save_data(); st.success("Client Saved Locally!")
 
 # --- PAGE 2: CLIENT VAULT ---
 elif page == "Client Vault":
-    if not st.session_state.clients:
-        st.info("No clients found. Go to 'Create Client' first.")
-    
     for c_name, c_data in list(st.session_state.clients.items()):
         with st.expander(f"🏢 {c_name}"):
-            t1, t2 = st.tabs(["✏️ Edit Profile", "🚀 Manual Send"])
+            t1, t2, t3 = st.tabs(["✏️ Edit Full Profile", "🤖 Automation", "🚀 Manual Send"])
             
             with t1:
                 c_data['name'] = st.text_input("Biz Name", c_data['name'], key=f"n_{c_name}")
                 c_data['desc'] = st.text_area("Description", c_data['desc'], key=f"d_{c_name}")
                 c_data['email'] = st.text_input("Sender Email", c_data['email'], key=f"e_{c_name}")
-                c_data['cta_link'] = st.text_input("Destination URL", c_data['cta_link'], key=f"l_{c_name}")
-                if st.button("Save Changes", key=f"save_{c_name}"):
-                    save_data(); st.success("Updated!"); st.rerun()
+                c_data['app_pw'] = st.text_input("App PW", c_data['app_pw'], type="password", key=f"p_{c_name}")
+                c_data['tone'] = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"], key=f"t_{c_name}")
+                if st.button("Save Profile Changes", key=f"save_{c_name}"):
+                    save_data(); st.success("Profile Updated!"); st.rerun()
 
             with t2:
-                m_aim = st.text_input("Campaign Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
+                c_data['auto_on'] = st.toggle("Automation Active", c_data['auto_on'], key=f"at_{c_name}")
+                c_data['auto_days'] = st.number_input("Interval (Days)", 1, 30, int(c_data['auto_days']), key=f"ad_{c_name}")
+                c_data['cta_aim'] = st.text_input("Auto CTA Goal", c_data['cta_aim'], key=f"aa_{c_name}")
+                c_data['cta_link'] = st.text_input("Auto CTA Link", c_data['cta_link'], key=f"al_{c_name}")
+                if st.button("Update Automation", key=f"ua_{c_name}"): 
+                    save_data(); st.success("Automation Updated")
+
+            with t3:
+                m_aim = st.text_input("Manual Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
+                m_link = st.text_input("Manual Link (Dest)", c_data.get('cta_link', ''), key=f"ml_{c_name}")
                 if st.button("🔥 Start Batch", key=f"sb_{c_name}"):
-                    if not st.session_state.g_key:
-                        st.error("Please enter GROQ Key in sidebar")
-                    else:
-                        progress = st.progress(0)
-                        leads_list = c_data['leads']
-                        for i, (_, lead) in enumerate(leads_list.iterrows()):
-                            res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim})
-                            c_data['send_log'].append({
-                                "Client": c_name, 
-                                "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                                "Lead": lead.get('F_EMAIL', 'N/A'), 
-                                "Status": "Success" if res==True else res
-                            })
-                            progress.progress((i + 1) / len(leads_list))
-                        save_data(); st.success("Batch Complete!"); st.rerun()
+                    for _, lead in c_data['leads'].iterrows():
+                        res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim, "link": m_link})
+                        c_data['send_log'].append({
+                            "Client": c_name, 
+                            "Time": datetime.now().strftime("%Y-%m-%d"), 
+                            "Lead": lead.get('F_EMAIL', 'N/A'), 
+                            "Status": "Success" if res==True else res
+                        })
+                    save_data(); st.rerun()
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
@@ -166,9 +167,23 @@ elif page == "Email Logs":
     all_logs = []
     for c_name, c_data in st.session_state.clients.items():
         for entry in c_data.get('send_log', []):
-            all_logs.append(entry)
+            log_item = entry.copy()
+            if 'Client' not in log_item: log_item['Client'] = c_name
+            all_logs.append(log_item)
             
     if all_logs:
         st.dataframe(pd.DataFrame(all_logs), use_container_width=True)
     else:
         st.info("No emails sent yet.")
+
+# --- PAGE 4: STATISTICS ---
+elif page == "Statistics":
+    st.header("📊 Click Performance")
+    st.write("*(Check your Google Sheet for real-time click numbers)*")
+    for c_name, c_data in st.session_state.clients.items():
+        sent = len(c_data.get('send_log', []))
+        st.subheader(f"Client: {c_name}")
+        c1, c2 = st.columns(2)
+        c1.metric("Total Emails Sent", sent)
+        c2.info("View 'Clicks' column in your Google Sheet for this client.")
+        st.divider()
