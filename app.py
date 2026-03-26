@@ -4,15 +4,14 @@ from groq import Groq
 import smtplib
 import json
 import os
-import requests
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# --- 1. CONFIGURATION & SYNC ---
+# --- 1. CONFIGURATION ---
 DATA_FILE = "agency_database.json"
-PA_URL = "https://mwilden.pythonanywhere.com"
-PA_PW = "agency123" 
+# Your Google Apps Script Web App URL
+TRACKER_URL = "https://script.google.com/macros/s/AKfycbwopXSz26Lv56blNumGcjFV-M9yCvFCzh6r5SK0dF7rBWDrA2R_3mow0B18JzDtQcfc/exec"
 
 def save_data():
     serializable = {}
@@ -25,43 +24,22 @@ def save_data():
                               for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
             serializable[name]['leads'] = temp_df.to_json()
     
-    # Save Locally
     with open(DATA_FILE, "w") as f:
         json.dump(serializable, f)
-    
-    # Auto-Push to PythonAnywhere
-    try:
-        requests.post(f"{PA_URL}/update_db", json=serializable, headers={"Authorization": PA_PW}, timeout=5)
-    except:
-        pass
-
-def sync_from_tracker():
-    try:
-        response = requests.get(f"{PA_URL}/get_db", headers={"Authorization": PA_PW}, timeout=10)
-        if response.status_code == 200:
-            new_data = response.json()
-            for name, info in new_data.items():
-                if isinstance(info['leads'], str):
-                    info['leads'] = pd.read_json(info['leads'])
-                st.session_state.clients[name] = info
-            with open(DATA_FILE, "w") as f:
-                json.dump(new_data, f)
-            return True, "Success"
-        else:
-            return False, f"Server Error: {response.status_code} (Check Password)"
-    except Exception as e:
-        return False, f"Connection Error: {str(e)}"
 
 # --- 2. DATA INITIALIZATION ---
 if 'clients' not in st.session_state:
     st.session_state.clients = {}
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            raw = json.load(f)
-            for name, info in raw.items():
-                if isinstance(info['leads'], str):
-                    info['leads'] = pd.read_json(info['leads'])
-                st.session_state.clients[name] = info
+        try:
+            with open(DATA_FILE, "r") as f:
+                raw = json.load(f)
+                for name, info in raw.items():
+                    if isinstance(info['leads'], str):
+                        info['leads'] = pd.read_json(info['leads'])
+                    st.session_state.clients[name] = info
+        except:
+            st.session_state.clients = {}
 
 # --- 3. CORE FUNCTIONS ---
 def process_spreadsheet(file):
@@ -79,23 +57,28 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
     try:
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
-        tracking_url = f"{PA_URL}/click/{client_info['name']}"
+        
+        # This creates the link that Google Sheets tracks
+        tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
         
         prompt = f"""
         From: {client_info['name']} to {s_name}.
-        Lead Info: {lead.get('F_INFO', 'Business owner')}.
+        Lead Info: {lead.get('F_INFO', 'Business owner/Lead')}.
         Client Biz: {client_info['desc']}.
         Goal: {cta_details['aim']}. 
         STRICT RULE: You MUST use this EXACT link for the Call to Action: {tracking_url}
         Tone: {client_info.get('tone', 'Professional')}.
         """
+        
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
         body = completion.choices[0].message.content
+        
         msg = MIMEMultipart()
         msg['From'] = f"{client_info['name']} <{client_info['email']}>"
         msg['To'] = lead.get('F_EMAIL')
         msg['Subject'] = f"Quick question for {s_name}"
         msg.attach(MIMEText(body, 'plain'))
+        
         server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls()
         server.login(client_info['email'], client_info['app_pw'])
         server.send_message(msg); server.quit()
@@ -103,22 +86,15 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
     except Exception as e: return str(e)
 
 # --- 4. UI NAVIGATION ---
-st.set_page_config(page_title="Agency Pro", layout="wide")
+st.set_page_config(page_title="Agency Pro: Google Edition", layout="wide")
 
 with st.sidebar:
     st.title("⚙️ Command Center")
     st.session_state.g_key = st.text_input("GROQ API Key", type="password")
-    page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs", "Statistics"])
+    page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs"])
     
     st.divider()
-    st.write("### 🔄 Auto-Sync")
-    if st.button("🔄 Sync Click Counts"):
-        success, msg = sync_from_tracker()
-        if success:
-            st.success("Clicks Updated!")
-            st.rerun()
-        else:
-            st.error(msg)
+    st.info("Note: Click counts are now updated automatically in your Google Sheet!")
 
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
@@ -126,59 +102,63 @@ if page == "Create Client":
     with st.form("create_form"):
         c1, c2 = st.columns(2)
         with c1:
-            name = st.text_input("Business Name")
+            name = st.text_input("Business Name (Must match Google Sheet exactly)")
             desc = st.text_area("Business Description")
             b_email = st.text_input("Sender Email")
             app_pw = st.text_input("App Password", type="password")
             tone = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"])
-            file = st.file_uploader("Leads Spreadsheet", type=["csv", "xlsx"])
         with c2:
-            st.write("### 🤖 Automation Settings")
-            auto_on = st.checkbox("Enable Automation")
-            days = st.number_input("Days Between", min_value=1, value=7)
-            cta_aim = st.text_input("Default CTA Goal")
-            cta_link = st.text_input("Default CTA Link")
+            st.write("### 🔗 Tracking Settings")
+            cta_aim = st.text_input("CTA Goal (e.g., Book a meeting)")
+            cta_link = st.text_input("Final Destination URL (The real website)")
+            file = st.file_uploader("Leads Spreadsheet", type=["csv", "xlsx"])
 
         if st.form_submit_button("Submit"):
-            if name and file:
+            if name and file and cta_link:
                 df = process_spreadsheet(file)
                 st.session_state.clients[name] = {
                     "name": name, "desc": desc, "email": b_email, "app_pw": app_pw,
-                    "auto_on": auto_on, "auto_days": days, "cta_aim": cta_aim, "cta_link": cta_link,
-                    "tone": tone, "leads": df, "send_log": [], "clicks": 0 
+                    "cta_aim": cta_aim, "cta_link": cta_link,
+                    "tone": tone, "leads": df, "send_log": []
                 }
-                save_data(); st.success("Client Saved!")
+                save_data(); st.success(f"Client {name} Saved locally!")
+                st.warning("Don't forget to add this client name to your Google Sheet Row!")
 
 # --- PAGE 2: CLIENT VAULT ---
 elif page == "Client Vault":
+    if not st.session_state.clients:
+        st.info("No clients found. Go to 'Create Client' first.")
+    
     for c_name, c_data in list(st.session_state.clients.items()):
         with st.expander(f"🏢 {c_name}"):
-            t1, t2, t3 = st.tabs(["✏️ Edit Full Profile", "🤖 Automation", "🚀 Manual Send"])
+            t1, t2 = st.tabs(["✏️ Edit Profile", "🚀 Manual Send"])
             
             with t1:
                 c_data['name'] = st.text_input("Biz Name", c_data['name'], key=f"n_{c_name}")
                 c_data['desc'] = st.text_area("Description", c_data['desc'], key=f"d_{c_name}")
                 c_data['email'] = st.text_input("Sender Email", c_data['email'], key=f"e_{c_name}")
-                c_data['app_pw'] = st.text_input("App PW", c_data['app_pw'], type="password", key=f"p_{c_name}")
-                c_data['tone'] = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"], key=f"t_{c_name}")
-                if st.button("Save Profile Changes", key=f"save_{c_name}"):
-                    save_data(); st.success("Profile Updated!"); st.rerun()
+                c_data['cta_link'] = st.text_input("Destination URL", c_data['cta_link'], key=f"l_{c_name}")
+                if st.button("Save Changes", key=f"save_{c_name}"):
+                    save_data(); st.success("Updated!"); st.rerun()
 
             with t2:
-                c_data['auto_on'] = st.toggle("Automation Active", c_data['auto_on'], key=f"at_{c_name}")
-                c_data['auto_days'] = st.number_input("Interval (Days)", 1, 30, int(c_data['auto_days']), key=f"ad_{c_name}")
-                c_data['cta_aim'] = st.text_input("Auto CTA Goal", c_data['cta_aim'], key=f"aa_{c_name}")
-                c_data['cta_link'] = st.text_input("Auto CTA Link", c_data['cta_link'], key=f"al_{c_name}")
-                if st.button("Update Automation", key=f"ua_{c_name}"): save_data(); st.success("Automation Updated")
-
-            with t3:
-                m_aim = st.text_input("Manual Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
-                m_link = st.text_input("Manual Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
+                m_aim = st.text_input("Campaign Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
                 if st.button("🔥 Start Batch", key=f"sb_{c_name}"):
-                    for _, lead in c_data['leads'].iterrows():
-                        res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim, "link": m_link})
-                        c_data['send_log'].append({"Client": c_name, "Time": datetime.now().strftime("%Y-%m-%d"), "Lead": lead.get('F_EMAIL', 'N/A'), "Status": "Success" if res==True else res})
-                    save_data(); st.rerun()
+                    if not st.session_state.g_key:
+                        st.error("Please enter GROQ Key in sidebar")
+                    else:
+                        progress = st.progress(0)
+                        leads_list = c_data['leads']
+                        for i, (_, lead) in enumerate(leads_list.iterrows()):
+                            res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim})
+                            c_data['send_log'].append({
+                                "Client": c_name, 
+                                "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                                "Lead": lead.get('F_EMAIL', 'N/A'), 
+                                "Status": "Success" if res==True else res
+                            })
+                            progress.progress((i + 1) / len(leads_list))
+                        save_data(); st.success("Batch Complete!"); st.rerun()
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
@@ -186,27 +166,9 @@ elif page == "Email Logs":
     all_logs = []
     for c_name, c_data in st.session_state.clients.items():
         for entry in c_data.get('send_log', []):
-            log_item = entry.copy()
-            if 'Client' not in log_item: log_item['Client'] = c_name
-            all_logs.append(log_item)
+            all_logs.append(entry)
             
     if all_logs:
-        df_logs = pd.DataFrame(all_logs)
-        cols = [c for c in ['Client', 'Time', 'Lead', 'Status'] if c in df_logs.columns]
-        st.dataframe(df_logs[cols], use_container_width=True)
+        st.dataframe(pd.DataFrame(all_logs), use_container_width=True)
     else:
         st.info("No emails sent yet.")
-
-# --- PAGE 4: STATISTICS ---
-elif page == "Statistics":
-    st.header("📊 Click Performance")
-    for c_name, c_data in st.session_state.clients.items():
-        sent = len(c_data.get('send_log', []))
-        clicks = c_data.get('clicks', 0)
-        rate = (clicks / sent * 100) if sent > 0 else 0
-        st.subheader(f"Client: {c_name}")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Sent", sent)
-        c2.metric("Total Clicks", clicks)
-        c3.metric("CTR %", f"{rate:.1f}%")
-        st.divider()
