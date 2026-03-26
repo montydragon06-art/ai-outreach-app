@@ -51,11 +51,16 @@ if 'clients' not in st.session_state:
             with open(DATA_FILE, "r") as f:
                 raw = json.load(f)
                 for name, info in raw.items():
+                    # This part handles converting the stored JSON back into a table
                     if isinstance(info['leads'], str):
                         info['leads'] = pd.read_json(info['leads'])
                     st.session_state.clients[name] = info
-        except:
+        except Exception as e:
+            # If the file is corrupted or empty, start with a blank dictionary
             st.session_state.clients = {}
+    else:
+        # If the file doesn't exist yet, start with a blank dictionary
+        st.session_state.clients = {}
 
 # --- 3. CORE FUNCTIONS ---
 def process_spreadsheet(file):
@@ -109,7 +114,7 @@ with st.sidebar:
 
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
-    st.header("➕ Create New Client")
+    st.header("Create New Client")
     with st.form("create_form"):
         c1, c2 = st.columns(2)
         with c1:
@@ -120,7 +125,7 @@ if page == "Create Client":
             tone = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"])
             file = st.file_uploader("Leads Spreadsheet", type=["csv", "xlsx"])
         with c2:
-            st.write("### 🤖 Automation Settings")
+            st.write("### Automation Settings")
             auto_on = st.checkbox("Enable Automation")
             days = st.number_input("Days Between", min_value=1, value=7)
             cta_aim = st.text_input("Default CTA Goal")
@@ -138,8 +143,8 @@ if page == "Create Client":
 # --- PAGE 2: CLIENT VAULT ---
 elif page == "Client Vault":
     for c_name, c_data in list(st.session_state.clients.items()):
-        with st.expander(f"🏢 {c_name}"):
-            t1, t2, t3 = st.tabs(["✏️ Edit Full Profile", "🤖 Automation", "🚀 Manual Send"])
+        with st.expander(f" {c_name}"):
+            t1, t2, t3 = st.tabs(["Edit Full Profile", "Automation", "Manual Send"])
             with t1:
                 c1, c2 = st.columns(2)
                 with c1:
@@ -166,7 +171,7 @@ elif page == "Client Vault":
             with t3:
                 m_aim = st.text_input("Manual Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
                 m_link = st.text_input("Manual Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
-                if st.button("🔥 Start Batch", key=f"sb_{c_name}"):
+                if st.button("Start Batch", key=f"sb_{c_name}"):
                     for _, lead in c_data['leads'].iterrows():
                         res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim, "link": m_link})
                         c_data['send_log'].append({"Client": c_name, "Time": datetime.now().strftime("%Y-%m-%d"), "Lead": lead.get('F_EMAIL', 'N/A'), "Status": "Success" if res==True else res})
@@ -174,7 +179,7 @@ elif page == "Client Vault":
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
-    st.header("📜 Email History")
+    st.header("Email History")
     all_logs = []
     for c_name, c_data in st.session_state.clients.items():
         for entry in c_data.get('send_log', []):
@@ -186,12 +191,12 @@ elif page == "Email Logs":
 
 # --- PAGE 4: STATISTICS ---
 elif page == "Statistics":
-    st.header("📊 Click Performance")
+    st.header("Click Performance")
     for c_name, c_data in st.session_state.clients.items():
         sent = len(c_data.get('send_log', []))
         clicks = c_data.get('clicks', 0)
         rate = (clicks / sent * 100) if sent > 0 else 0
-        st.subheader(f"🏢 {c_name}")
+        st.subheader(f" {c_name}")
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Sent", sent)
         c2.metric("Total Clicks", clicks)
