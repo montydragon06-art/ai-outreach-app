@@ -85,7 +85,11 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         Lead Info: {lead.get('F_INFO', 'Business owner/Lead')}.
         Client Biz: {client_info['desc']}.
         Goal: {cta_details['aim']}. 
-        STRICT RULE: You MUST use this EXACT link for the Call to Action: {tracking_url}
+        
+        STRICT RULE: You must write this email in HTML format. 
+        Wrap the following tracking link inside a professional call-to-action button or link 
+        using an <a href='...'> tag: {tracking_url}
+        
         Tone: {client_info.get('tone', 'Professional')}.
         """
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
