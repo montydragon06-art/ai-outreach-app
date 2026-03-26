@@ -81,8 +81,8 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
         
         prompt = f"""
-        Write a professional email from {client_info['name']} to {s_name}.
-        Lead Context: {lead.get('F_INFO', 'Business owner')}.
+        Write a advertisment email from {client_info['name']} to {s_name}.
+        Lead Context: {lead.get('F_INFO')}.
         Business Description: {client_info['desc']}.
         Goal: {cta_details['aim']}.
         Tone: {client_info.get('tone', 'Professional')}.
