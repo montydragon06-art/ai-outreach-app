@@ -93,6 +93,8 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         
         Example Button Code: 
         <a href="{tracking_url}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Our Catalog</a>
+        Do not use any complex HTML or CSS buttons. 
+        At the end, include this tracking link exactly as it is: {tracking_url}
         """
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
         body = completion.choices[0].message.content
