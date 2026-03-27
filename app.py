@@ -78,34 +78,63 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
     try:
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
+        
+        # This creates the link for your tracker
         tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
         
+        # --- 1. THE UPDATED PROMPT ---
+        # Tells the AI to write plain text and NOT include its own HTML
         prompt = f"""
-        Write a professional email from {client_info['name']} to {s_name}.
+        Write a professional, friendly plain-text email from {client_info['name']} to {s_name}.
         Lead Context: {lead.get('F_INFO', 'Business owner')}.
         Business Description: {client_info['desc']}.
         Goal: {cta_details['aim']}.
         Tone: {client_info.get('tone', 'Professional')}.
 
-        STRICT RULE: 
-        You MUST return the email in HTML format.
-        Hide the following tracking link behind a professional blue button or a clear "Click Here" link: {tracking_url}
-        
-        Example Button Code: 
-        <a href="{tracking_url}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Our Catalog</a>
-        Do not use any complex HTML or CSS buttons. 
-        At the end, include this tracking link exactly as it is: {tracking_url}
+        STRICT RULES:
+        1. Do NOT use any HTML tags like <div>, <button>, or <html>.
+        2. Write only the message body as natural text.
+        3. Do not include the link yourself; I will add it.
         """
-        completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
-        body = completion.choices[0].message.content
-        msg = MIMEMultipart(); msg['From'] = f"{client_info['name']} <{client_info['email']}>"
-        msg['To'] = lead.get('F_EMAIL'); msg['Subject'] = f"Quick question for {s_name}"
-        msg.attach(MIMEText(body, 'html'))
-        server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls()
+        
+        completion = client.chat.completions.create(
+            model="llama-3.1-8b-instant", 
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        email_body = completion.choices[0].message.content
+        
+        # --- 2. THE CLEAN HYPERLINK ---
+        # Converts AI newlines to HTML breaks and adds a simple blue link
+        formatted_body = email_body.replace('\n', '<br>')
+        hyperlink_html = f'<br><br><a href="{tracking_url}" style="color: #007bff; text-decoration: underline;">Visit Our Store</a>'
+        
+        full_content = f"""
+        <html>
+          <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #333;">
+            {formatted_body}
+            {hyperlink_html}
+          </body>
+        </html>
+        """
+
+        # --- 3. SENDING ---
+        msg = MIMEMultipart()
+        msg['From'] = f"{client_info['name']} <{client_info['email']}>"
+        msg['To'] = lead.get('F_EMAIL')
+        msg['Subject'] = f"Quick question for {s_name}"
+        
+        # We send as 'html' so the link is clickable, but the style is simple text
+        msg.attach(MIMEText(full_content, 'html'))
+        
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
         server.login(client_info['email'], client_info['app_pw'])
-        server.send_message(msg); server.quit()
+        server.send_message(msg)
+        server.quit()
         return True
-    except Exception as e: return str(e)
+    except Exception as e: 
+        return str(e)
 
 # --- 4. UI NAVIGATION ---
 st.set_page_config(page_title="Agency Pro", layout="wide")
