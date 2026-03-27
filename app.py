@@ -81,16 +81,18 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
         
         prompt = f"""
-        Write a advertisment email from {client_info['name']} to {s_name}.
-        Lead Context: {lead.get('F_INFO')}.
+        Write a professional email from {client_info['name']} to {s_name}.
+        Lead Context: {lead.get('F_INFO', 'Business owner')}.
         Business Description: {client_info['desc']}.
         Goal: {cta_details['aim']}.
         Tone: {client_info.get('tone', 'Professional')}.
 
-        STRICT HTML RULE: 
-        You must return ONLY the HTML body of the email.
-        You MUST include a clickable link or button using this exact URL: {tracking_url}
-        Example: <a href="{tracking_url}" style="color: #007bff; text-decoration: underline;">Click here to book a call</a>
+        STRICT RULE: 
+        You MUST return the email in HTML format.
+        Hide the following tracking link behind a professional blue button or a clear "Click Here" link: {tracking_url}
+        
+        Example Button Code: 
+        <a href="{tracking_url}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Our Catalog</a>
         """
         completion = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
         body = completion.choices[0].message.content
