@@ -12,7 +12,7 @@ from email.mime.multipart import MIMEMultipart
 # --- 1. CONFIGURATION ---
 DATA_FILE = "agency_database.json"
 # Your Google Apps Script Web App URL
-TRACKER_URL = "https://script.google.com/macros/library/d/11xKiEqTHklUTDMDNf7DmtUV37NvBthxNRdDwJ_MzYNwPh0vDrCeHZRF1/10"
+TRACKER_URL = "https://script.google.com/macros/s/AKfycbw0mdkl4yfLLHQcDh4B6nDqi39N8ZyetIdcSMrt5lrTKwuLWtV4CfIKRdR5tGxUXlTz/exec"
 # Your Google Sheet ID (The long string in the browser URL of your sheet)
 SHEET_ID = "1fqMwLHV51IgbcjHM0y6rLIG1zciLPL7m_Z2gJ4ZA-tk"
 
