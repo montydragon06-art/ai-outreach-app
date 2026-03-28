@@ -76,27 +76,33 @@ def process_spreadsheet(file):
 
 def send_email_logic(client_info, lead, groq_key, cta_details):
     try:
+        # 1. SETUP LEAD INFO
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
         
-        # Create the tracking URL
-        tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
+        # 2. DETERMINE STRATEGY (Link vs Reply)
+        # cta_details['type'] comes from the radio/selectbox we added to the UI
+        is_reply_campaign = cta_details.get('type') == "Direct Reply"
         
-        # --- STRICKER PROMPT ---
-        # We define exactly where the AI starts and stops
-        prompt = f"""
-        You are a professional assistant writing ONLY the body paragraphs of an email.
-        Sender: {client_info['name']}
-        Recipient: {s_name}
-        Business Context: {client_info['desc']}
-        Goal of this email: {cta_details['aim']}
+        if is_reply_campaign:
+            strategy_instruction = f"End the email with a brief, conversational question asking them to reply directly to this email if they want to {cta_details['aim']}. DO NOT mention any links, websites, or buttons."
+        else:
+            strategy_instruction = f"Focus on the value proposition of {cta_details['aim']}. Write the body text only; I will manually append a tracking link at the very bottom."
 
-        CRITICAL RULES:
-        1. Write ONLY 2-3 body paragraphs.
-        2. DO NOT include a greeting (like 'Dear Steph').
-        3. DO NOT include a sign-off (like 'Best regards' or '[Your Name]').
-        4. DO NOT mention links, buttons, or placeholders like '[INSERT LINK]'.
-        5. Return ONLY the raw text of the paragraphs.
+        # 3. THE "UNBREAKABLE" PROMPT
+        # Forces AI to only write the middle, preventing [Your Name] or [Link] placeholders
+        prompt = f"""
+        You are a professional assistant writing ONLY the middle 2 paragraphs of an email from {client_info['name']}.
+        Context: {client_info['desc']}
+        Recipient: {s_name}
+        {strategy_instruction}
+
+        STRICT RULES:
+        1. Write ONLY the body paragraphs.
+        2. DO NOT include a greeting (No 'Dear', No 'Hi').
+        3. DO NOT include a sign-off (No 'Best regards', No names).
+        4. DO NOT use HTML tags like <div> or <button>.
+        5. DO NOT leave placeholders like '[Link]', '[Insert Name]', or '[Date]'.
         """
         
         completion = client.chat.completions.create(
@@ -104,20 +110,24 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
             messages=[{"role": "user", "content": prompt}]
         )
         
-        # The AI only gives us the "meat" of the email
-        ai_paragraphs = completion.choices[0].message.content.strip().replace('\n', '<br>')
+        # Clean the AI text and convert newlines to HTML breaks for spacing
+        ai_meat = completion.choices[0].message.content.strip().replace('\n', '<br>')
         
-        # --- THE SANDWICH METHOD ---
-        # We manually build the greeting, link, and sign-off so they are ALWAYS perfect.
-        full_content = f"""
+        # 4. THE DYNAMIC LINK (Only if it's a Link Click campaign)
+        link_html = ""
+        if not is_reply_campaign:
+            tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
+            link_html = f'<br><br><a href="{tracking_url}" style="color: #007bff; text-decoration: underline; font-weight: bold;">Visit Our Store</a>'
+
+        # 5. THE SANDWICH ASSEMBLY
+        # This hard-codes the parts the AI usually messes up
+        full_html = f"""
         <html>
           <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">
             Dear {s_name},<br><br>
             
-            {ai_paragraphs}<br><br>
-            
-            Ready to get started? Click the link below to explore:<br>
-            <a href="{tracking_url}" style="color: #007bff; text-decoration: underline; font-weight: bold;">Visit Our Store</a><br><br>
+            {ai_meat}
+            {link_html}<br><br>
             
             Best regards,<br>
             The {client_info['name']} Team
@@ -125,13 +135,13 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         </html>
         """
 
-        # --- SENDING ---
+        # 6. SMTP SENDING
         msg = MIMEMultipart()
         msg['From'] = f"{client_info['name']} <{client_info['email']}>"
         msg['To'] = lead.get('F_EMAIL')
         msg['Subject'] = f"Quick question for {s_name}"
         
-        msg.attach(MIMEText(full_content, 'html'))
+        msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
@@ -139,6 +149,7 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         server.send_message(msg)
         server.quit()
         return True
+        
     except Exception as e: 
         return str(e)
 
@@ -204,21 +215,29 @@ elif page == "Client Vault":
                     if new_file: c_data['leads'] = process_spreadsheet(new_file)
                     save_data(); st.success("Profile Updated!"); st.rerun()
 
-            with t2:
-                c_data['auto_on'] = st.toggle("Automation Active", c_data['auto_on'], key=f"at_{c_name}")
-                c_data['auto_days'] = st.number_input("Interval (Days)", 1, 30, int(c_data['auto_days']), key=f"ad_{c_name}")
-                c_data['cta_aim'] = st.text_input("Auto CTA Goal", c_data['cta_aim'], key=f"aa_{c_name}")
-                c_data['cta_link'] = st.text_input("Auto CTA Link", c_data['cta_link'], key=f"al_{c_name}")
-                if st.button("Update Automation", key=f"ua_{c_name}"): save_data(); st.success("Updated")
+           with t2:
+            c_data['auto_on'] = st.toggle("Automation Active", c_data['auto_on'], key=f"at_{c_name}")
+            c_data['auto_days'] = st.number_input("Interval (Days)", 1, 30, int(c_data['auto_days']), key=f"ad_{c_name}")
+    
+            # ADD THIS LINE BELOW:
+            c_data['auto_cta_type'] = st.selectbox("Campaign Strategy", ["Link Click", "Direct Reply"], key=f"acta_{c_name}")
+    
+            c_data['cta_aim'] = st.text_input("Auto CTA Goal", c_data['cta_aim'], key=f"aa_{c_name}")
+            c_data['cta_link'] = st.text_input("Auto CTA Link", c_data['cta_link'], key=f"al_{c_name}")
+            if st.button("Update Automation", key=f"ua_{c_name}"): save_data(); st.success("Updated")
 
             with t3:
-                m_aim = st.text_input("Manual Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
-                m_link = st.text_input("Manual Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
-                if st.button("Start Batch", key=f"sb_{c_name}"):
-                    for _, lead in c_data['leads'].iterrows():
-                        res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim, "link": m_link})
-                        c_data['send_log'].append({"Client": c_name, "Time": datetime.now().strftime("%Y-%m-%d"), "Lead": lead.get('F_EMAIL', 'N/A'), "Status": "Success" if res==True else res})
-                    save_data(); st.rerun()
+            # ADD THIS LINE BELOW:
+            m_type = st.radio("Strategy", ["Link Click", "Direct Reply"], horizontal=True, key=f"mt_{c_name}")
+    
+            m_aim = st.text_input("Manual Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
+            m_link = st.text_input("Manual Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
+    
+            if st.button("Start Batch", key=f"sb_{c_name}"):
+                for _, lead in c_data['leads'].iterrows():
+                    # UPDATE THIS LINE to include m_type:
+                    res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim, "link": m_link, "type": m_type})
+                    # ... rest of your logging code ...
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
