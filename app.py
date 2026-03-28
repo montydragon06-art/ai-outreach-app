@@ -79,22 +79,23 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
         
-        # This creates the link for your tracker
+        # Create the tracking URL
         tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
         
-        # --- 1. THE UPDATED PROMPT ---
-        # Tells the AI to write plain text and NOT include its own HTML
+        # --- UPDATED PROMPT ---
+        # We tell the AI the link is ALREADY handled so it doesn't leave placeholders.
         prompt = f"""
-        Write a professional, friendly plain-text email from {client_info['name']} to {s_name}.
+        Write a professional, friendly email from {client_info['name']} to {s_name}.
         Lead Context: {lead.get('F_INFO', 'Business owner')}.
         Business Description: {client_info['desc']}.
         Goal: {cta_details['aim']}.
         Tone: {client_info.get('tone', 'Professional')}.
 
-        STRICT RULES:
-        1. Do NOT use any HTML tags like <div>, <button>, or <html>.
-        2. Write only the message body as natural text.
-        3. Do not include the link yourself; I will add it.
+        STRICT INSTRUCTIONS:
+        1. Write ONLY the body of the email.
+        2. Do NOT use any HTML tags (<div>, <button>, etc.).
+        3. Do NOT include any placeholders like "[INSERT LINK HERE]" or "[LINK]". 
+        4. End your message naturally before the call to action; I will append the link programmatically.
         """
         
         completion = client.chat.completions.create(
@@ -102,29 +103,34 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
             messages=[{"role": "user", "content": prompt}]
         )
         
-        email_body = completion.choices[0].message.content
+        email_body = completion.choices[0].message.content.strip()
         
-        # --- 2. THE CLEAN HYPERLINK ---
-        # Converts AI newlines to HTML breaks and adds a simple blue link
+        # --- CLEAN FORMATTING ---
+        # Convert AI newlines to HTML breaks
         formatted_body = email_body.replace('\n', '<br>')
-        hyperlink_html = f'<br><br><a href="{tracking_url}" style="color: #007bff; text-decoration: underline;">Visit Our Store</a>'
+        
+        # Manually define the link text here so it's always consistent
+        link_label = "Visit Our Store" # You can change this to "View Catalog" etc.
+        hyperlink_html = f'<br><br><a href="{tracking_url}" style="color: #007bff; text-decoration: underline; font-weight: bold;">{link_label}</a>'
         
         full_content = f"""
         <html>
-          <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #333;">
+          <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">
             {formatted_body}
             {hyperlink_html}
+            <br><br>
+            Best regards,<br>
+            {client_info['name']}
           </body>
         </html>
         """
 
-        # --- 3. SENDING ---
+        # --- SENDING ---
         msg = MIMEMultipart()
         msg['From'] = f"{client_info['name']} <{client_info['email']}>"
         msg['To'] = lead.get('F_EMAIL')
         msg['Subject'] = f"Quick question for {s_name}"
         
-        # We send as 'html' so the link is clickable, but the style is simple text
         msg.attach(MIMEText(full_content, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
