@@ -11,9 +11,7 @@ from email.mime.multipart import MIMEMultipart
 
 # --- 1. CONFIGURATION ---
 DATA_FILE = "agency_database.json"
-# Your Google Apps Script Web App URL
 TRACKER_URL = "https://script.google.com/macros/s/AKfycbw0mdkl4yfLLHQcDh4B6nDqi39N8ZyetIdcSMrt5lrTKwuLWtV4CfIKRdR5tGxUXlTz/exec"
-# Your Google Sheet ID (The long string in the browser URL of your sheet)
 SHEET_ID = "1fqMwLHV51IgbcjHM0y6rLIG1zciLPL7m_Z2gJ4ZA-tk"
 
 def save_data():
@@ -30,10 +28,8 @@ def save_data():
 
 def sync_clicks_from_google():
     try:
-        # Construct the export URL to get the sheet as a CSV
         csv_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
         df = pd.read_csv(csv_url)
-        # Update local session state with click counts from the sheet
         for index, row in df.iterrows():
             c_name = str(row['ClientName']).strip()
             if c_name in st.session_state.clients:
@@ -51,15 +47,12 @@ if 'clients' not in st.session_state:
             with open(DATA_FILE, "r") as f:
                 raw = json.load(f)
                 for name, info in raw.items():
-                    # This part handles converting the stored JSON back into a table
                     if isinstance(info['leads'], str):
                         info['leads'] = pd.read_json(info['leads'])
                     st.session_state.clients[name] = info
         except Exception as e:
-            # If the file is corrupted or empty, start with a blank dictionary
             st.session_state.clients = {}
     else:
-        # If the file doesn't exist yet, start with a blank dictionary
         st.session_state.clients = {}
 
 # --- 3. CORE FUNCTIONS ---
@@ -76,12 +69,9 @@ def process_spreadsheet(file):
 
 def send_email_logic(client_info, lead, groq_key, cta_details):
     try:
-        # 1. SETUP LEAD INFO
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
         
-        # 2. DETERMINE STRATEGY (Link vs Reply)
-        # cta_details['type'] comes from the radio/selectbox we added to the UI
         is_reply_campaign = cta_details.get('type') == "Direct Reply"
         
         if is_reply_campaign:
@@ -89,8 +79,6 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         else:
             strategy_instruction = f"Focus on the value proposition of {cta_details['aim']}. Write the body text only; I will manually append a tracking link at the very bottom."
 
-        # 3. THE "UNBREAKABLE" PROMPT
-        # Forces AI to only write the middle, preventing [Your Name] or [Link] placeholders
         prompt = f"""
         You are a professional assistant writing ONLY the middle 2 paragraphs of an email from {client_info['name']}.
         Context: {client_info['desc']}
@@ -110,37 +98,29 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
             messages=[{"role": "user", "content": prompt}]
         )
         
-        # Clean the AI text and convert newlines to HTML breaks for spacing
         ai_meat = completion.choices[0].message.content.strip().replace('\n', '<br>')
         
-        # 4. THE DYNAMIC LINK (Only if it's a Link Click campaign)
         link_html = ""
         if not is_reply_campaign:
             tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
             link_html = f'<br><br><a href="{tracking_url}" style="color: #007bff; text-decoration: underline; font-weight: bold;">Visit Our Store</a>'
 
-        # 5. THE SANDWICH ASSEMBLY
-        # This hard-codes the parts the AI usually messes up
         full_html = f"""
         <html>
           <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">
             Dear {s_name},<br><br>
-            
             {ai_meat}
             {link_html}<br><br>
-            
             Best regards,<br>
             The {client_info['name']} Team
           </body>
         </html>
         """
 
-        # 6. SMTP SENDING
         msg = MIMEMultipart()
         msg['From'] = f"{client_info['name']} <{client_info['email']}>"
         msg['To'] = lead.get('F_EMAIL')
         msg['Subject'] = f"Quick question for {s_name}"
-        
         msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
@@ -149,7 +129,6 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         server.send_message(msg)
         server.quit()
         return True
-        
     except Exception as e: 
         return str(e)
 
@@ -210,34 +189,33 @@ elif page == "Client Vault":
                     c_data['tone'] = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"], key=f"t_{c_name}")
                     st.write("---")
                     st.write("**Update Leads Spreadsheet**")
-                    new_file = st.file_uploader("Upload New Leads (Replaces Current)", type=["csv", "xlsx"], key=f"f_{c_name}")
+                    new_file = st.file_uploader("Upload New Leads", type=["csv", "xlsx"], key=f"f_{c_name}")
                 if st.button("Save Profile Changes", key=f"save_{c_name}"):
                     if new_file: c_data['leads'] = process_spreadsheet(new_file)
                     save_data(); st.success("Profile Updated!"); st.rerun()
 
-           with t2:
-            c_data['auto_on'] = st.toggle("Automation Active", c_data['auto_on'], key=f"at_{c_name}")
-            c_data['auto_days'] = st.number_input("Interval (Days)", 1, 30, int(c_data['auto_days']), key=f"ad_{c_name}")
-    
-            # ADD THIS LINE BELOW:
-            c_data['auto_cta_type'] = st.selectbox("Campaign Strategy", ["Link Click", "Direct Reply"], key=f"acta_{c_name}")
-    
-            c_data['cta_aim'] = st.text_input("Auto CTA Goal", c_data['cta_aim'], key=f"aa_{c_name}")
-            c_data['cta_link'] = st.text_input("Auto CTA Link", c_data['cta_link'], key=f"al_{c_name}")
-            if st.button("Update Automation", key=f"ua_{c_name}"): save_data(); st.success("Updated")
+            with t2:
+                c_data['auto_on'] = st.toggle("Automation Active", c_data['auto_on'], key=f"at_{c_name}")
+                c_data['auto_days'] = st.number_input("Interval (Days)", 1, 30, int(c_data['auto_days']), key=f"ad_{c_name}")
+                c_data['auto_cta_type'] = st.selectbox("Campaign Strategy", ["Link Click", "Direct Reply"], key=f"acta_{c_name}")
+                c_data['cta_aim'] = st.text_input("Auto CTA Goal", c_data['cta_aim'], key=f"aa_{c_name}")
+                c_data['cta_link'] = st.text_input("Auto CTA Link", c_data['cta_link'], key=f"al_{c_name}")
+                if st.button("Update Automation", key=f"ua_{c_name}"): save_data(); st.success("Updated")
 
             with t3:
-            # ADD THIS LINE BELOW:
-            m_type = st.radio("Strategy", ["Link Click", "Direct Reply"], horizontal=True, key=f"mt_{c_name}")
-    
-            m_aim = st.text_input("Manual Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
-            m_link = st.text_input("Manual Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
-    
-            if st.button("Start Batch", key=f"sb_{c_name}"):
-                for _, lead in c_data['leads'].iterrows():
-                    # UPDATE THIS LINE to include m_type:
-                    res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim, "link": m_link, "type": m_type})
-                    # ... rest of your logging code ...
+                m_type = st.radio("Strategy", ["Link Click", "Direct Reply"], horizontal=True, key=f"mt_{c_name}")
+                m_aim = st.text_input("Manual Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
+                m_link = st.text_input("Manual Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
+                if st.button("Start Batch", key=f"sb_{c_name}"):
+                    for _, lead in c_data['leads'].iterrows():
+                        res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim, "link": m_link, "type": m_type})
+                        c_data['send_log'].append({
+                            "Client": c_name, 
+                            "Time": datetime.now().strftime("%Y-%m-%d"), 
+                            "Lead": lead.get('F_EMAIL', 'N/A'), 
+                            "Status": "Success" if res==True else res
+                        })
+                    save_data(); st.success("Batch Complete!"); st.rerun()
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
