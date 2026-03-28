@@ -82,20 +82,21 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         # Create the tracking URL
         tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
         
-        # --- UPDATED PROMPT ---
-        # We tell the AI the link is ALREADY handled so it doesn't leave placeholders.
+        # --- STRICKER PROMPT ---
+        # We define exactly where the AI starts and stops
         prompt = f"""
-        Write a professional, friendly email from {client_info['name']} to {s_name}.
-        Lead Context: {lead.get('F_INFO', 'Business owner')}.
-        Business Description: {client_info['desc']}.
-        Goal: {cta_details['aim']}.
-        Tone: {client_info.get('tone', 'Professional')}.
+        You are a professional assistant writing ONLY the body paragraphs of an email.
+        Sender: {client_info['name']}
+        Recipient: {s_name}
+        Business Context: {client_info['desc']}
+        Goal of this email: {cta_details['aim']}
 
-        STRICT INSTRUCTIONS:
-        1. Write ONLY the body of the email.
-        2. Do NOT use any HTML tags (<div>, <button>, etc.).
-        3. Do NOT include any placeholders like "[INSERT LINK HERE]" or "[LINK]". 
-        4. End your message naturally before the call to action; I will append the link programmatically.
+        CRITICAL RULES:
+        1. Write ONLY 2-3 body paragraphs.
+        2. DO NOT include a greeting (like 'Dear Steph').
+        3. DO NOT include a sign-off (like 'Best regards' or '[Your Name]').
+        4. DO NOT mention links, buttons, or placeholders like '[INSERT LINK]'.
+        5. Return ONLY the raw text of the paragraphs.
         """
         
         completion = client.chat.completions.create(
@@ -103,24 +104,23 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
             messages=[{"role": "user", "content": prompt}]
         )
         
-        email_body = completion.choices[0].message.content.strip()
+        # The AI only gives us the "meat" of the email
+        ai_paragraphs = completion.choices[0].message.content.strip().replace('\n', '<br>')
         
-        # --- CLEAN FORMATTING ---
-        # Convert AI newlines to HTML breaks
-        formatted_body = email_body.replace('\n', '<br>')
-        
-        # Manually define the link text here so it's always consistent
-        link_label = "Visit Our Store" # You can change this to "View Catalog" etc.
-        hyperlink_html = f'<br><br><a href="{tracking_url}" style="color: #007bff; text-decoration: underline; font-weight: bold;">{link_label}</a>'
-        
+        # --- THE SANDWICH METHOD ---
+        # We manually build the greeting, link, and sign-off so they are ALWAYS perfect.
         full_content = f"""
         <html>
           <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">
-            {formatted_body}
-            {hyperlink_html}
-            <br><br>
+            Dear {s_name},<br><br>
+            
+            {ai_paragraphs}<br><br>
+            
+            Ready to get started? Click the link below to explore:<br>
+            <a href="{tracking_url}" style="color: #007bff; text-decoration: underline; font-weight: bold;">Visit Our Store</a><br><br>
+            
             Best regards,<br>
-            {client_info['name']}
+            The {client_info['name']} Team
           </body>
         </html>
         """
