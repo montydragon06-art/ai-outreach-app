@@ -219,6 +219,18 @@ elif page == "Client Vault":
                 if st.button("Save Profile Changes", key=f"save_{c_name}"):
                     if new_file: c_data['leads'] = process_spreadsheet(new_file)
                     save_data(); st.success("Profile Updated!"); st.rerun()
+                # --- DELETE CLIENT BUTTON ---
+                st.divider()
+                with st.expander("⚠️ Danger Zone"):
+                    st.write("Deleting a client will permanently remove their leads, logs, and settings.")
+                    if st.button(f"Delete {c_name} Permanently", key=f"del_{c_name}", type="primary"):
+                        # Remove from session state
+                        del st.session_state.clients[c_name]
+                        # Update the JSON file
+                        save_data()
+                        st.success(f"Client '{c_name}' has been deleted.")
+                        # Refresh the page to update the list
+                        st.rerun()
 
             with t2:
                 c_data['auto_on'] = st.toggle("Automation Active", c_data['auto_on'], key=f"at_{c_name}")
