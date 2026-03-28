@@ -72,25 +72,48 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
         
+        # 1. IDENTIFY THE STRATEGY
         is_reply_campaign = cta_details.get('type') == "Direct Reply"
         
+        # 2. CREATE THE STRICTOR INSTRUCTION BLOCK
         if is_reply_campaign:
-            strategy_instruction = f"End the email with a brief, conversational question asking them to reply directly to this email if they want to {cta_details['aim']}. DO NOT mention any links, websites, or buttons."
+            # The AI is told ONLY about the offer and the reply action
+            strategy_instruction = f"""
+            CAMPAIGN TYPE: Direct Reply / No-Link Advertising.
+            GOAL: Get the recipient to reply to this email.
+            OFFER TO MENTION: {cta_details['aim']}
+            
+            STRICT RULES FOR THIS EMAIL:
+            - DO NOT mention any websites, URLs, links, or 'clicking' anything.
+            - DO NOT use phrases like 'Check out our site' or 'Link in bio'.
+            - END the email with a natural, open-ended question that encourages a direct reply.
+            """
         else:
-            strategy_instruction = f"Focus on the value proposition of {cta_details['aim']}. Write the body text only; I will manually append a tracking link at the very bottom."
+            # The AI is told about the value, knowing a link will be added by the system later
+            strategy_instruction = f"""
+            CAMPAIGN TYPE: Link Click / Traffic Generation.
+            GOAL: Highlight the value of {cta_details['aim']}.
+            
+            STRICT RULES FOR THIS EMAIL:
+            - Write the persuasive body text only. 
+            - DO NOT write the link yourself.
+            - DO NOT use placeholders like [Link Here]. 
+            - I will append the technical link at the bottom; your job is just to build interest.
+            """
 
+        # 3. THE "UNBREAKABLE" PROMPT ASSEMBLY
         prompt = f"""
-        You are a professional assistant writing ONLY the middle 2 paragraphs of an email from {client_info['name']}.
-        Context: {client_info['desc']}
+        You are an expert copywriter for {client_info['name']}. 
+        Business Description: {client_info['desc']}
         Recipient: {s_name}
+
         {strategy_instruction}
 
-        STRICT RULES:
-        1. Write ONLY the body paragraphs.
-        2. DO NOT include a greeting (No 'Dear', No 'Hi').
-        3. DO NOT include a sign-off (No 'Best regards', No names).
-        4. DO NOT use HTML tags like <div> or <button>.
-        5. DO NOT leave placeholders like '[Link]', '[Insert Name]', or '[Date]'.
+        GENERAL CONSTRAINTS:
+        - Write EXACTLY 2 paragraphs of body text.
+        - NO greetings (No 'Hi', No 'Dear').
+        - NO sign-offs (No 'Best regards', No 'Sincerely').
+        - NO placeholders of any kind (No brackets [] or caps).
         """
         
         completion = client.chat.completions.create(
@@ -100,11 +123,13 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         
         ai_meat = completion.choices[0].message.content.strip().replace('\n', '<br>')
         
+        # 4. SYSTEM-SIDE LINK ASSEMBLY (The AI never sees this part)
         link_html = ""
         if not is_reply_campaign:
             tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
             link_html = f'<br><br><a href="{tracking_url}" style="color: #007bff; text-decoration: underline; font-weight: bold;">Visit Our Store</a>'
 
+        # 5. FINAL EMAIL "SANDWICH"
         full_html = f"""
         <html>
           <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">
@@ -117,10 +142,11 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         </html>
         """
 
+        # SMTP Sending Code...
         msg = MIMEMultipart()
         msg['From'] = f"{client_info['name']} <{client_info['email']}>"
         msg['To'] = lead.get('F_EMAIL')
-        msg['Subject'] = f"Quick question for {s_name}"
+        msg['Subject'] = f"Question for {s_name}"
         msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
@@ -197,25 +223,50 @@ elif page == "Client Vault":
             with t2:
                 c_data['auto_on'] = st.toggle("Automation Active", c_data['auto_on'], key=f"at_{c_name}")
                 c_data['auto_days'] = st.number_input("Interval (Days)", 1, 30, int(c_data['auto_days']), key=f"ad_{c_name}")
+                
                 c_data['auto_cta_type'] = st.selectbox("Campaign Strategy", ["Link Click", "Direct Reply"], key=f"acta_{c_name}")
-                c_data['cta_aim'] = st.text_input("Auto CTA Goal", c_data['cta_aim'], key=f"aa_{c_name}")
-                c_data['cta_link'] = st.text_input("Auto CTA Link", c_data['cta_link'], key=f"al_{c_name}")
-                if st.button("Update Automation", key=f"ua_{c_name}"): save_data(); st.success("Updated")
+                
+                if c_data['auto_cta_type'] == "Link Click":
+                    c_data['cta_aim'] = st.text_input("CTA Purpose", c_data.get('cta_aim', ''), key=f"aa_{c_name}")
+                    c_data['cta_link'] = st.text_input("CTA Link", c_data.get('cta_link', ''), key=f"al_{c_name}")
+                else:
+                    # We store the "Offer" in the same 'cta_aim' slot so the AI still sees it
+                    c_data['cta_aim'] = st.text_area("The Offer", c_data.get('cta_aim', ''), key=f"off_{c_name}")
+                    # We store the "Action" (Reply 'YES') in a new slot
+                    c_data['cta_action'] = st.text_input("Action Required", c_data.get('cta_action', "Reply to this email"), key=f"act_{c_name}")
 
+                if st.button("Update Automation", key=f"ua_{c_name}"): 
+                    save_data()
+                    st.success("Settings Saved!")
             with t3:
                 m_type = st.radio("Strategy", ["Link Click", "Direct Reply"], horizontal=True, key=f"mt_{c_name}")
-                m_aim = st.text_input("Manual Goal", c_data.get('cta_aim', ''), key=f"ma_{c_name}")
-                m_link = st.text_input("Manual Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
+                
+                if m_type == "Link Click":
+                    m_aim = st.text_input("CTA Purpose", key=f"ma_{c_name}")
+                    m_link = st.text_input("Manual Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
+                    m_action = "" # Not needed for link
+                else:
+                    m_aim = st.text_area("The Offer", key=f"moff_{c_name}")
+                    m_action = st.text_input("Action Required", "Reply 'YES' to this email", key=f"mact_{c_name}")
+                    m_link = "" # Not needed for reply
+
                 if st.button("Start Batch", key=f"sb_{c_name}"):
+                    # We pass 'm_action' into the aim so the AI knows exactly what the lead should do
+                    final_aim = f"{m_aim} and get them to {m_action}" if m_type == "Direct Reply" else m_aim
+                    
                     for _, lead in c_data['leads'].iterrows():
-                        res = send_email_logic(c_data, lead, st.session_state.g_key, {"aim": m_aim, "link": m_link, "type": m_type})
+                        res = send_email_logic(c_data, lead, st.session_state.g_key, 
+                                               {"aim": final_aim, "link": m_link, "type": m_type})
+                        
                         c_data['send_log'].append({
                             "Client": c_name, 
                             "Time": datetime.now().strftime("%Y-%m-%d"), 
                             "Lead": lead.get('F_EMAIL', 'N/A'), 
                             "Status": "Success" if res==True else res
                         })
-                    save_data(); st.success("Batch Complete!"); st.rerun()
+                    save_data()
+                    st.success("Batch Complete!")
+                    st.rerun()
 
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
