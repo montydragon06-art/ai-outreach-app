@@ -281,16 +281,55 @@ elif page == "Client Vault":
                     st.rerun()
 
 # --- PAGE 3: EMAIL LOGS ---
+# --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
-    st.header("Email History")
-    all_logs = []
-    for c_name, c_data in st.session_state.clients.items():
-        for entry in c_data.get('send_log', []):
-            log_item = entry.copy()
-            if 'Client' not in log_item: log_item['Client'] = c_name
-            all_logs.append(log_item)
-    if all_logs: st.dataframe(pd.DataFrame(all_logs), use_container_width=True)
-    else: st.info("No emails sent yet.")
+    st.header("📋 Email History")
+
+    if not st.session_state.clients:
+        st.info("No clients created yet. Create a client to see logs.")
+    else:
+        # 1. Create a list of clients for the dropdown
+        client_list = ["All Clients"] + list(st.session_state.clients.keys())
+        
+        # 2. Add the Filter UI
+        selected_filter = st.selectbox("Filter by Client", client_list)
+        
+        st.divider()
+
+        # 3. Gather the logs based on the filter
+        all_logs = []
+        for c_name, c_data in st.session_state.clients.items():
+            # If "All Clients" is picked, or the specific client matches
+            if selected_filter == "All Clients" or selected_filter == c_name:
+                for entry in c_data.get('send_log', []):
+                    log_item = entry.copy()
+                    # Ensure the Client name is in the row for clarity
+                    if 'Client' not in log_item: 
+                        log_item['Client'] = c_name
+                    all_logs.append(log_item)
+
+        # 4. Display the Data
+        if all_logs:
+            # Convert to DataFrame and sort by time (newest first)
+            log_df = pd.DataFrame(all_logs)
+            if "Time" in log_df.columns:
+                log_df = log_df.sort_values(by="Time", ascending=False)
+            
+            st.dataframe(log_df, use_container_width=True, hide_index=True)
+            
+            # 5. Add a "Clear Logs" button for the specific view
+            if st.button(f"Clear Logs for {selected_filter}", type="secondary"):
+                if selected_filter == "All Clients":
+                    for c_name in st.session_state.clients:
+                        st.session_state.clients[c_name]['send_log'] = []
+                else:
+                    st.session_state.clients[selected_filter]['send_log'] = []
+                
+                save_data()
+                st.success(f"Logs for {selected_filter} cleared!")
+                st.rerun()
+        else:
+            st.warning(f"No emails have been sent for {selected_filter} yet.")
 
 # --- PAGE 4: STATISTICS ---
 elif page == "Statistics":
