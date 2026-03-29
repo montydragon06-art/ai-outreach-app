@@ -72,19 +72,38 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
         
+        # Determine the Strategy
         is_reply_campaign = cta_details.get('type') == "Direct Reply"
         
-        # Determine AI Instructions
         if is_reply_campaign:
-            strategy_instruction = f"End by asking them to reply directly to this email if they want to {cta_details['aim']}. NO links."
+            strategy_instruction = f"""
+            CAMPAIGN: Direct Reply (No Links).
+            GOAL: Get a response about: {cta_details['aim']}.
+            STRICT RULE: DO NOT mention any websites, URLs, or links. 
+            END the email with a clear question asking them to reply to you.
+            """
         else:
-            strategy_instruction = f"Build interest for {cta_details['aim']}. I will append the link at the bottom."
+            strategy_instruction = f"""
+            CAMPAIGN: Link Click.
+            GOAL: Build interest in: {cta_details['aim']}.
+            STRICT RULE: DO NOT write any links or placeholders like [Link]. 
+            I will handle the link; you just write the persuasive body.
+            """
 
+        # The "Unbreakable" Prompt
         prompt = f"""
-        Write 2 professional paragraphs for an email from {client_info['name']}.
+        You are writing ONLY the 2 middle paragraphs of a professional email from {client_info['name']}.
         Context: {client_info['desc']}
+        Recipient: {s_name}
+
         {strategy_instruction}
-        RULES: No greetings, No sign-offs, No placeholders like [Link].
+
+        STRICT CONSTRAINTS:
+        1. Write ONLY the body paragraphs.
+        2. NO greetings (No 'Dear', No 'Hi').
+        3. NO sign-offs (No 'Best regards', No names).
+        4. NO placeholders (No brackets [] or caps like [INSERT INFO]).
+        5. Tone: {client_info.get('tone', 'Professional')}.
         """
         
         completion = client.chat.completions.create(
@@ -93,17 +112,16 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         )
         ai_meat = completion.choices[0].message.content.strip().replace('\n', '<br>')
         
-        # Link Assembly
+        # Link Assembly (System-side, invisible to AI)
         link_html = ""
         if not is_reply_campaign:
-            # We use the NEW tracking URL from your Google Script
             tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
-            # 'target="_top"' is an extra safety layer to ensure it breaks out of frames
-            link_html = f'<br><br><a href="{tracking_url}" target="_top" style="color: #007bff; text-decoration: underline; font-weight: bold;">Click here to view</a>'
+            link_html = f'<br><br><a href="{tracking_url}" target="_top" style="color: #007bff; font-weight: bold; text-decoration: underline;">Visit Our Website</a>'
 
+        # The Final Sandwich
         full_html = f"""
         <html>
-          <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">
             Dear {s_name},<br><br>
             {ai_meat}
             {link_html}<br><br>
@@ -113,11 +131,11 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         </html>
         """
 
-        # SMTP logic (stays the same as your previous working version)
+        # SMTP Sending
         msg = MIMEMultipart()
         msg['From'] = f"{client_info['name']} <{client_info['email']}>"
         msg['To'] = lead.get('F_EMAIL')
-        msg['Subject'] = f"Quick update for {s_name}"
+        msg['Subject'] = f"Quick question for {s_name}"
         msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
@@ -128,7 +146,6 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         return True
     except Exception as e: 
         return str(e)
-
 # --- 4. UI NAVIGATION ---
 st.set_page_config(page_title="Agency Pro", layout="wide")
 
