@@ -72,67 +72,38 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         s_name = str(lead.get('F_NAME', 'there')).strip()
         client = Groq(api_key=groq_key)
         
-        # 1. IDENTIFY THE STRATEGY
         is_reply_campaign = cta_details.get('type') == "Direct Reply"
         
-        # 2. CREATE THE STRICTOR INSTRUCTION BLOCK
+        # Determine AI Instructions
         if is_reply_campaign:
-            # The AI is told ONLY about the offer and the reply action
-            strategy_instruction = f"""
-            CAMPAIGN TYPE: Direct Reply / No-Link Advertising.
-            GOAL: Get the recipient to reply to this email.
-            OFFER TO MENTION: {cta_details['aim']}
-            
-            STRICT RULES FOR THIS EMAIL:
-            - DO NOT mention any websites, URLs, links, or 'clicking' anything.
-            - DO NOT use phrases like 'Check out our site' or 'Link in bio'.
-            - END the email with a natural, open-ended question that encourages a direct reply.
-            """
+            strategy_instruction = f"End by asking them to reply directly to this email if they want to {cta_details['aim']}. NO links."
         else:
-            # The AI is told about the value, knowing a link will be added by the system later
-            strategy_instruction = f"""
-            CAMPAIGN TYPE: Link Click / Traffic Generation.
-            GOAL: Highlight the value of {cta_details['aim']}.
-            
-            STRICT RULES FOR THIS EMAIL:
-            - Write the persuasive body text only. 
-            - DO NOT write the link yourself.
-            - DO NOT use placeholders like [Link Here]. 
-            - I will append the technical link at the bottom; your job is just to build interest.
-            """
+            strategy_instruction = f"Build interest for {cta_details['aim']}. I will append the link at the bottom."
 
-        # 3. THE "UNBREAKABLE" PROMPT ASSEMBLY
         prompt = f"""
-        You are an expert copywriter for {client_info['name']}. 
-        Business Description: {client_info['desc']}
-        Recipient: {s_name}
-
+        Write 2 professional paragraphs for an email from {client_info['name']}.
+        Context: {client_info['desc']}
         {strategy_instruction}
-
-        GENERAL CONSTRAINTS:
-        - Write EXACTLY 2 paragraphs of body text.
-        - NO greetings (No 'Hi', No 'Dear').
-        - NO sign-offs (No 'Best regards', No 'Sincerely').
-        - NO placeholders of any kind (No brackets [] or caps).
+        RULES: No greetings, No sign-offs, No placeholders like [Link].
         """
         
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant", 
             messages=[{"role": "user", "content": prompt}]
         )
-        
         ai_meat = completion.choices[0].message.content.strip().replace('\n', '<br>')
         
-        # 4. SYSTEM-SIDE LINK ASSEMBLY (The AI never sees this part)
+        # Link Assembly
         link_html = ""
         if not is_reply_campaign:
+            # We use the NEW tracking URL from your Google Script
             tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
-            link_html = f'<br><br><a href="{tracking_url}" style="color: #007bff; text-decoration: underline; font-weight: bold;">Visit Our Store</a>'
+            # 'target="_top"' is an extra safety layer to ensure it breaks out of frames
+            link_html = f'<br><br><a href="{tracking_url}" target="_top" style="color: #007bff; text-decoration: underline; font-weight: bold;">Click here to view</a>'
 
-        # 5. FINAL EMAIL "SANDWICH"
         full_html = f"""
         <html>
-          <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">
+          <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             Dear {s_name},<br><br>
             {ai_meat}
             {link_html}<br><br>
@@ -142,11 +113,11 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         </html>
         """
 
-        # SMTP Sending Code...
+        # SMTP logic (stays the same as your previous working version)
         msg = MIMEMultipart()
         msg['From'] = f"{client_info['name']} <{client_info['email']}>"
         msg['To'] = lead.get('F_EMAIL')
-        msg['Subject'] = f"Question for {s_name}"
+        msg['Subject'] = f"Quick update for {s_name}"
         msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
