@@ -150,7 +150,7 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
 st.set_page_config(page_title="Agency Pro", layout="wide")
 
 with st.sidebar:
-    st.title("⚙️ Command Center")
+    st.title("Command Center")
     st.session_state.g_key = st.text_input("GROQ API Key", type="password")
     page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs", "Statistics"])
     st.divider()
@@ -209,7 +209,7 @@ elif page == "Client Vault":
                     save_data(); st.success("Profile Updated!"); st.rerun()
                 # --- DELETE CLIENT BUTTON ---
                 st.divider()
-                with st.expander("⚠️ Danger Zone"):
+                with st.expander("Danger Zone"):
                     st.write("Deleting a client will permanently remove their leads, logs, and settings.")
                     if st.button(f"Delete {c_name} Permanently", key=f"del_{c_name}", type="primary"):
                         # Remove from session state
@@ -271,7 +271,7 @@ elif page == "Client Vault":
 # --- PAGE 3: EMAIL LOGS ---
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
-    st.header("📋 Email History")
+    st.header("Email History")
 
     if not st.session_state.clients:
         st.info("No clients created yet. Create a client to see logs.")
