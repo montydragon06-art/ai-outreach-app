@@ -188,7 +188,8 @@ with st.sidebar:
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
     st.header("Create New Client")
-    with st.form("create_form"):
+    # Added clear_on_submit to reset the form after successful saving
+    with st.form("create_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
             name = st.text_input("Business Name")
@@ -203,16 +204,35 @@ if page == "Create Client":
             days = st.number_input("Days Between", min_value=1, value=7)
             cta_aim = st.text_input("Default CTA Goal")
             cta_link = st.text_input("Default CTA Link (Destination)")
+        
         if st.form_submit_button("Submit"):
             if name and file:
                 df = process_spreadsheet(file)
+                
+                # 1. Update session state first
                 st.session_state.clients[name] = {
-                    "name": name, "desc": desc, "email": b_email, "app_pw": app_pw,
-                    "auto_on": auto_on, "auto_days": days, "cta_aim": cta_aim, "cta_link": cta_link,
-                    "tone": tone, "leads": df, "send_log": [], "clicks": 0 
+                    "name": name, 
+                    "desc": desc, 
+                    "email": b_email, 
+                    "app_pw": app_pw,
+                    "auto_on": auto_on, 
+                    "auto_days": days, 
+                    "cta_aim": cta_aim, 
+                    "cta_link": cta_link,
+                    "tone": tone, 
+                    "leads": df, 
+                    "send_log": [], 
+                    "clicks": 0 
                 }
-                save_data(); st.success("Client Saved!")
-
+                
+                # 2. Commit to the JSON file permanently
+                save_data() 
+                
+                # 3. Success message and force refresh
+                st.success(f"Client '{name}' successfully saved to the Vault!")
+                st.rerun() 
+            else:
+                st.error("Please provide both a Business Name and a Leads file.")
 # --- PAGE 2: CLIENT VAULT ---
 elif page == "Client Vault":
     for c_name, c_data in list(st.session_state.clients.items()):
