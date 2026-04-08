@@ -48,15 +48,17 @@ def save_data():
 
 def load_data():
     """Loads and decrypts data from disk into session state."""
-    cipher = get_cipher()
+    # 1. YOU MUST DEFINE CIPHER FIRST
+    cipher = get_cipher() 
+    
+    # 2. NOW YOU CAN CHECK IF IT EXISTS
     if os.path.exists(DATA_FILE) and cipher:
         try:
             with open(DATA_FILE, "rb") as f:
                 encrypted_content = f.read()
             
-            # 1. Decrypt
+            # Decrypt and parse
             decrypted_json = cipher.decrypt(encrypted_content).decode()
-            # 2. Parse
             raw = json.loads(decrypted_json)
             
             for name, info in raw.items():
@@ -68,11 +70,6 @@ def load_data():
                 st.session_state.clients[name] = info
         except Exception as e:
             st.error(f"Security Load Error: {e}. Check your Master Key.")
-
-# --- CRITICAL INITIALIZATION ---
-if 'clients' not in st.session_state:
-    st.session_state.clients = {}
-    load_data()
 def sync_clicks_from_google():
     try:
         csv_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
