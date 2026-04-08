@@ -354,10 +354,11 @@ elif page == "Client Vault":
                         st.success("Automation Saved!")
 
                 # --- TAB 3: MANUAL BATCH SEND (Fixed Batch Logic) ---
+                # --- TAB 3: MANUAL BATCH SEND (Fixed Cloud Logic) ---
                 with t3:
                     st.subheader("Send Batch Now")
                     m_type = st.radio("Strategy for this Batch", ["Link Click", "Direct Reply"], horizontal=True, key=f"mt_{c_name}")
-                    
+
                     if m_type == "Link Click":
                         m_aim = st.text_input("Batch Goal", value=c_data.get('cta_aim', ''), key=f"ma_{c_name}")
                         m_link = st.text_input("Batch Link", value=c_data.get('cta_link', ''), key=f"ml_{c_name}")
@@ -366,53 +367,55 @@ elif page == "Client Vault":
                         m_aim = st.text_area("Batch Offer", value=c_data.get('cta_aim', ''), key=f"moff_{c_name}")
                         m_action = st.text_input("Batch Action", value=c_data.get('cta_action', "Reply to this email"), key=f"mact_{c_name}")
                         m_link = ""
+
                     if st.button("🚀 Execute Batch Send", key=f"sb_{c_name}"):
-            # Safety check for GROQ Key
-            if not st.session_state.get('g_key'):
-                st.error("Please enter your GROQ API Key in the sidebar first!")
-            else:
-                progress_bar = st.progress(0)
-                leads_df = c_data['leads']
-                total_leads = len(leads_df)
-        
-                # Prepare details for the email function
-                final_aim = f"{m_aim}. Required Action: {m_action}" if m_type == "Direct Reply" else m_aim
-        
-                for i, (_, lead) in enumerate(leads_df.iterrows()):
-                    lead_email = lead.get('F_EMAIL', 'Unknown')
-            
-                    # --- MANDATORY LEGAL CHECK: Suppress blacklisted leads ---
-                    if check_blacklist(lead_email):
-                        # Log that we skipped this lead for compliance
-                        c_data.setdefault('send_log', []).append({
-                            "Client": c_name, 
-                            "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                            "Lead": lead_email, 
-                            "Status": "Skipped (Unsubscribed)"
-                        })
-                        continue # Skip to the next lead in the loop
-            
-                    # CALL THE SENDING LOGIC ONLY IF NOT BLACKLISTED
-                    res = send_email_logic(
-                        c_data, 
-                        lead, 
-                        st.session_state.g_key, 
-                        {"aim": final_aim, "link": m_link, "type": m_type}
-                    )
-            
-                    # Log the result
-                    c_data.setdefault('send_log', []).append({
-                        "Client": c_name, 
-                        "Time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "Lead": lead_email,
-                        "Status": "Success" if res == True else f"Error: {res}"
-                    })
-            
-                    progress_bar.progress((i + 1) / total_leads)
-        
-                save_data() # Save the logs back to your secure Google Sheet
-                st.success(f"Batch complete! Sent to {total_leads} leads.")
-                st.rerun()
+                        # Safety check for GROQ Key
+                        if not st.session_state.get('g_key'):
+                            st.error("Please enter your GROQ API Key in the sidebar first!")
+                        else:
+                            progress_bar = st.progress(0)
+                            leads_df = c_data['leads']
+                            total_leads = len(leads_df)
+
+                            # Prepare details for the email function
+                            final_aim = f"{m_aim}. Required Action: {m_action}" if m_type == "Direct Reply" else m_aim
+
+                            for i, (_, lead) in enumerate(leads_df.iterrows()):
+                                lead_email = lead.get('F_EMAIL', 'Unknown')
+
+                                # --- MANDATORY LEGAL CHECK: Suppress blacklisted leads ---
+                                # This checks your Google Sheet tab named "Blacklist"
+                                if check_blacklist(lead_email):
+                                    c_data.setdefault('send_log', []).append({
+                                        "Client": c_name,
+                                        "Time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                        "Lead": lead_email,
+                                        "Status": "Skipped (Unsubscribed)"
+                                    })
+                                    continue # Skip to the next person
+
+                                # --- SENDING LOGIC ---
+                                res = send_email_logic(
+                                    c_data,
+                                    lead,
+                                    st.session_state.g_key,
+                                    {"aim": final_aim, "link": m_link, "type": m_type}
+                                )
+
+                                # Log the result
+                                c_data.setdefault('send_log', []).append({
+                                    "Client": c_name,
+                                    "Time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                    "Lead": lead_email,
+                                    "Status": "Success" if res == True else f"Error: {res}"
+                                })
+
+                                progress_bar.progress((i + 1) / total_leads)
+
+                            # Save all results to Google Sheets and refresh the page
+                            save_data()
+                            st.success(f"Batch complete! Processed {total_leads} leads.")
+                            st.rerun()
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
     st.header("Email History")
