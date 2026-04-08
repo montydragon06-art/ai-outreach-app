@@ -5,3 +5,4 @@ flask
 openpyxl
 cryptography
 gspread
+st-gsheets-connection
