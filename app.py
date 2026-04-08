@@ -361,39 +361,53 @@ elif page == "Client Vault":
                         m_link = ""
 
                     if st.button("🚀 Execute Batch Send", key=f"sb_{c_name}"):
-                        # Safety check for GROQ Key
-                        if not st.session_state.get('g_key'):
-                            st.error("Please enter your GROQ API Key in the sidebar first!")
-                        else:
-                            progress_bar = st.progress(0)
-                            leads_df = c_data['leads']
-                            total_leads = len(leads_df)
-                            
-                            # Prepare details for the email function
-                            # We combine aim and action for the AI prompt here
-                            final_aim = f"{m_aim}. Required Action: {m_action}" if m_type == "Direct Reply" else m_aim
-                            
-                            for i, (_, lead) in enumerate(leads_df.iterrows()):
-                                # CALL THE SENDING LOGIC
-                                res = send_email_logic(
-                                    c_data, 
-                                    lead, 
-                                    st.session_state.g_key, 
-                                    {"aim": final_aim, "link": m_link, "type": m_type}
-                                )
-                                
-                                # Log the result
-                                c_data.setdefault('send_log', []).append({
-                                    "Client": c_name, 
-                                    "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                                    "Lead": lead.get('F_EMAIL', 'Unknown'), 
-                                    "Status": "Success" if res == True else f"Error: {res}"
-                                })
-                                progress_bar.progress((i + 1) / total_leads)
-                            
-                            save_data()
-                            st.success(f"Batch complete! Sent to {total_leads} leads.")
-                            st.rerun()
+    # Safety check for GROQ Key [cite: 307]
+    if not st.session_state.get('g_key'):
+        st.error("Please enter your GROQ API Key in the sidebar first!") [cite: 308]
+    else:
+        progress_bar = st.progress(0) [cite: 310]
+        leads_df = c_data['leads'] [cite: 311]
+        total_leads = len(leads_df) [cite: 312]
+        
+        # Prepare details for the email function [cite: 313]
+        final_aim = f"{m_aim}. Required Action: {m_action}" if m_type == "Direct Reply" else m_aim [cite: 315]
+        
+        for i, (_, lead) in enumerate(leads_df.iterrows()): [cite: 316]
+            lead_email = lead.get('F_EMAIL', 'Unknown') [cite: 328]
+            
+            # --- MANDATORY LEGAL CHECK: Suppress blacklisted leads ---
+            # This checks your persistent Google Sheet to see if the lead opted out
+            if check_blacklist(lead_email):
+                # Log that we skipped this lead for compliance
+                c_data.setdefault('send_log', []).append({
+                    "Client": c_name, 
+                    "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                    "Lead": lead_email, 
+                    "Status": "Skipped (Unsubscribed)"
+                })
+                continue # Skip to the next lead in the loop
+            
+            # CALL THE SENDING LOGIC ONLY IF NOT BLACKLISTED [cite: 317]
+            res = send_email_logic(
+                c_data, 
+                lead, 
+                st.session_state.g_key, 
+                {"aim": final_aim, "link": m_link, "type": m_type} [cite: 322]
+            ) [cite: 318]
+            
+            # Log the result [cite: 324]
+            c_data.setdefault('send_log', []).append({
+                "Client": c_name, 
+                "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), [cite: 327]
+                "Lead": lead_email, [cite: 328]
+                "Status": "Success" if res == True else f"Error: {res}" [cite: 329]
+            }) [cite: 325]
+            
+            progress_bar.progress((i + 1) / total_leads) [cite: 331]
+        
+        save_data() # Save the logs back to your secure Google Sheet [cite: 332]
+        st.success(f"Batch complete! Sent to {total_leads} leads.") [cite: 333]
+        st.rerun() [cite: 334]
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
     st.header("Email History")
