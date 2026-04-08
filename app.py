@@ -10,12 +10,15 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from cryptography.fernet import Fernet
 import base64
-from cryptography.fernet import Fernet
-import json
-import os
 import gspread
 from google.oauth2.service_account import Credentials
-# --- ENCRYPTION HELPERS ---
+
+# --- 1. SETTINGS & SECRETS ---
+# Define these at the top so the rest of the code can find them
+SHEET_ID = st.secrets.get("gsheet_id", "")
+TRACKER_URL = st.secrets.get("tracker_url", "https://your-tracker-link.com")
+
+# --- 2. ENCRYPTION HELPERS ---
 def get_cipher():
     """Retrieves the key from Streamlit Secrets and creates a Cipher object."""
     try:
@@ -24,40 +27,46 @@ def get_cipher():
     except Exception as e:
         st.error("Master Key missing or invalid in Streamlit Secrets!")
         return None
+
+# --- 3. DATABASE CONNECTION ---
+def get_gsheet():
+    """Connects to Google Sheets using the Sheet ID from secrets."""
+    try:
+        # Correctly handles the service account dictionary from secrets
+        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        return gc.open_by_key(SHEET_ID)
+    except Exception as e:
+        st.error(f"Database Connection Error: {e}")
+        return None
+
 def check_blacklist(email):
     """Checks if an email exists in the Google Sheet Blacklist."""
     sheet = get_gsheet()
     if not sheet: return False
-    blacklist_ws = sheet.worksheet("Blacklist")
-    # Search the 'Email' column
-    return email in blacklist_ws.col_values(1)
+    try:
+        blacklist_ws = sheet.worksheet("Blacklist")
+        # Optimization: col_values(1) gets the 'Email' column
+        return email in blacklist_ws.col_values(1)
+    except:
+        return False
 
 def add_to_blacklist(email):
     """Adds a lead to the permanent suppression list."""
     sheet = get_gsheet()
     if not sheet: return
-    blacklist_ws = sheet.worksheet("Blacklist")
-    if email not in blacklist_ws.col_values(1):
-        blacklist_ws.append_row([email, datetime.now().strftime("%Y-%m-%d")])
-# --- DATABASE CONNECTION ---
-def get_gsheet():
-    """Connects to Google Sheets using the Sheet ID from secrets."""
     try:
-        # For simplicity, we use the library's ability to pick up credentials 
-        # or you can paste a JSON dict into secrets
-        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        return gc.open_by_key(st.secrets["gsheet_id"])
+        blacklist_ws = sheet.worksheet("Blacklist")
+        if email not in blacklist_ws.col_values(1):
+            blacklist_ws.append_row([email, datetime.now().strftime("%Y-%m-%d")])
     except Exception as e:
-        st.error(f"Database Connection Error: {e}")
-        return None
+        st.error(f"Error adding to blacklist: {e}")
 
 def save_data():
     """Encrypts and saves entire vault to Google Sheets."""
-    cipher = get_cipher() [cite: 27]
+    cipher = get_cipher()
     sheet = get_gsheet()
     if not cipher or not sheet: return
 
-    # Prepare data for encryption [cite: 30-35]
     serializable = {}
     for name, info in st.session_state.clients.items():
         client_copy = info.copy()
@@ -65,16 +74,18 @@ def save_data():
             client_copy['leads'] = info['leads'].to_json()
         serializable[name] = client_copy
     
-    # Encrypt [cite: 37-39]
     encrypted_blob = cipher.encrypt(json.dumps(serializable).encode()).decode()
     
-    # Write to 'Clients' tab (Row 2, Column 1 for Name; Row 2, Column 2 for Blob)
-    worksheet = sheet.worksheet("Clients")
-    worksheet.update('A2', [["Master_Vault", encrypted_blob]])
+    try:
+        worksheet = sheet.worksheet("Clients")
+        # Update Row 2, Column 1 & 2
+        worksheet.update('A2', [["Master_Vault", encrypted_blob]])
+    except Exception as e:
+        st.error(f"Save Error: {e}")
 
 def load_data():
     """Loads and decrypts data from Google Sheets."""
-    cipher = get_cipher() [cite: 46]
+    cipher = get_cipher()
     sheet = get_gsheet()
     if not sheet or not cipher: return
 
@@ -84,52 +95,39 @@ def load_data():
         
         if not encrypted_blob: return
 
-        # Decrypt [cite: 53-54]
         decrypted_json = cipher.decrypt(encrypted_blob.encode()).decode()
         raw = json.loads(decrypted_json)
         
         for name, info in raw.items():
             if isinstance(info.get('leads'), str):
                 try:
-                    info['leads'] = pd.read_json(info['leads']) [cite: 58]
+                    info['leads'] = pd.read_json(info['leads'])
                 except:
                     info['leads'] = pd.DataFrame()
-            st.session_state.clients[name] = info [cite: 61]
+            st.session_state.clients[name] = info
     except Exception as e:
-        st.error(f"Database Load Error: {e}")
-def sync_clicks_from_google():
-    try:
-        csv_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
-        df = pd.read_csv(csv_url)
-        for index, row in df.iterrows():
-            c_name = str(row['ClientName']).strip()
-            if c_name in st.session_state.clients:
-                st.session_state.clients[c_name]['clicks'] = int(row['Clicks'])
-        save_data()
-        return True
-    except Exception as e:
-        return f"Sync Error: {str(e)}"
+        # Don't show error if it's just an empty sheet
+        pass
 
-# --- 2. DATA INITIALIZATION ---
+# --- 4. DATA INITIALIZATION ---
+# This must come AFTER load_data is defined
 if 'clients' not in st.session_state:
     st.session_state.clients = {}
-# --- 3. CORE FUNCTIONS ---
+    load_data() # Trigger the initial cloud fetch
+
+# --- 5. CORE FUNCTIONS ---
 def process_spreadsheet(file):
     try:
         df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
         df = df.dropna(axis=1, how='all')
-        
-        # Clean column names
         df.columns = [str(c).strip().upper() for c in df.columns]
         
-        # MANDATORY CHECK: Look for SOURCE
         if "SOURCE" not in df.columns:
-            st.error("❌ ERROR: Spreadsheet is missing the 'SOURCE' column. This is required for legal compliance.")
-            return pd.DataFrame() # Returns empty so the form won't submit
+            st.error("❌ ERROR: Spreadsheet is missing 'SOURCE' column. Required for UK GDPR compliance.")
+            return pd.DataFrame()
             
         mapping = {"NAME": "F_NAME", "EMAIL": "F_EMAIL", "INFORMATION": "F_INFO", "SOURCE": "F_SOURCE"}
         df = df.rename(columns=mapping)
-        
         return df.dropna(subset=['F_NAME']) if "F_NAME" in df.columns else df
     except Exception as e:
         st.error(f"File Error: {e}")
