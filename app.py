@@ -205,6 +205,9 @@ with st.sidebar:
         res = sync_clicks_from_google()
         if res == True: st.success("Clicks Updated!"); st.rerun()
         else: st.error("Make sure your Google Sheet is 'Shared with link'")
+    st.divider()
+    st.caption("🔐 **Data Protection Active**")
+    st.caption("Client data and SMTP credentials are encrypted at rest using AES-128 via Fernet.")
 
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
