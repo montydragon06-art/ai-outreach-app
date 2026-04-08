@@ -12,7 +12,36 @@ from streamlit_gsheets import GSheetsConnection
 # --- 1. SETTINGS & SECRETS ---
 SHEET_ID = st.secrets.get("gsheet_id", "")
 TRACKER_URL = st.secrets.get("tracker_url", "")
+def get_conn():
+    return st.connection("gsheets", type=GSheetsConnection)
 
+def add_to_blacklist(email):
+    conn = get_conn()
+    try:
+        # Read existing blacklist
+        df = conn.read(worksheet="Blacklist")
+        new_row = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
+        df = pd.concat([df, new_row], ignore_index=True).drop_duplicates()
+        conn.update(worksheet="Blacklist", data=df)
+    except:
+        # Create new if it fails
+        df = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
+        conn.update(worksheet="Blacklist", data=df)
+# --- UNSUBSCRIBE LOGIC --- 
+if "unsubscribe" in st.query_params:
+    email_to_blacklist = st.query_params["unsubscribe"]
+    add_to_blacklist(email_to_blacklist) # Now this function is known to Python!
+    st.success(f"Successfully unsubscribed: {email_to_blacklist}")
+    st.info("You may now close this window.")
+    st.stop() # Stops the rest of the app from loading for the lead
+
+def check_blacklist(email):
+    conn = get_conn()
+    try:
+        df = conn.read(worksheet="Blacklist")
+        return email in df["Email"].values
+    except:
+        return False
 # --- 2. CORE HELPER FUNCTIONS (Must be defined before they are called) ---
 
 def get_cipher():
@@ -62,29 +91,7 @@ def load_data():
     except:
         pass
 
-def get_conn():
-    return st.connection("gsheets", type=GSheetsConnection)
 
-def add_to_blacklist(email):
-    conn = get_conn()
-    try:
-        # Read existing blacklist
-        df = conn.read(worksheet="Blacklist")
-        new_row = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
-        df = pd.concat([df, new_row], ignore_index=True).drop_duplicates()
-        conn.update(worksheet="Blacklist", data=df)
-    except:
-        # Create new if it fails
-        df = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
-        conn.update(worksheet="Blacklist", data=df)
-
-def check_blacklist(email):
-    conn = get_conn()
-    try:
-        df = conn.read(worksheet="Blacklist")
-        return email in df["Email"].values
-    except:
-        return False
 def sync_clicks_from_google():
     """Syncs click data from the Clicks worksheet."""
     conn = get_conn()
@@ -154,12 +161,6 @@ def send_email_logic(client_info, lead, groq_key):
         return True
     except Exception as e:
         return str(e)
-if "unsubscribe" in st.query_params:
-    email_to_blacklist = st.query_params["unsubscribe"]
-    add_to_blacklist(email_to_blacklist) # Now this function is known to Python!
-    st.success(f"Successfully unsubscribed: {email_to_blacklist}")
-    st.info("You may now close this window.")
-    st.stop() # Stops the rest of the app from loading for the lead
 # --- 3. EXECUTION LOGIC (The actual running of the app) ---
 
 # Initialize session state and load cloud data
