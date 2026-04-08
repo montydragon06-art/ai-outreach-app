@@ -104,12 +104,22 @@ def process_spreadsheet(file):
     try:
         df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
         df = df.dropna(axis=1, how='all')
+        
+        # Clean column names
         df.columns = [str(c).strip().upper() for c in df.columns]
-        mapping = {"NAME": "F_NAME", "EMAIL": "F_EMAIL", "INFORMATION": "F_INFO"}
+        
+        # MANDATORY CHECK: Look for SOURCE
+        if "SOURCE" not in df.columns:
+            st.error("❌ ERROR: Spreadsheet is missing the 'SOURCE' column. This is required for legal compliance.")
+            return pd.DataFrame() # Returns empty so the form won't submit
+            
+        mapping = {"NAME": "F_NAME", "EMAIL": "F_EMAIL", "INFORMATION": "F_INFO", "SOURCE": "F_SOURCE"}
         df = df.rename(columns=mapping)
+        
         return df.dropna(subset=['F_NAME']) if "F_NAME" in df.columns else df
     except Exception as e:
-        st.error(f"File Error: {e}"); return pd.DataFrame()
+        st.error(f"File Error: {e}")
+        return pd.DataFrame()
 
 def send_email_logic(client_info, lead, groq_key, cta_details):
     try:
