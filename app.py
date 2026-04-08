@@ -10,7 +10,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from cryptography.fernet import Fernet
 import base64
-
+from cryptography.fernet import Fernet
+st.write(f"YOUR NEW MASTER KEY: {Fernet.generate_key().decode()}")
 # --- 1. CONFIGURATION ---
 DATA_FILE = "agency_database.json"
 TRACKER_URL = "https://script.google.com/macros/s/AKfycbw0mdkl4yfLLHQcDh4B6nDqi39N8ZyetIdcSMrt5lrTKwuLWtV4CfIKRdR5tGxUXlTz/exec"
