@@ -39,43 +39,15 @@ def get_cipher():
         return None
 
 # --- 3. DATABASE CONNECTION ---
-def get_gsheet():
-    """Connects to Google Sheets using the Sheet ID from secrets."""
-    try:
-        # Correctly handles the service account dictionary from secrets
-        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        return gc.open_by_key(SHEET_ID)
-    except Exception as e:
-        st.error(f"Database Connection Error: {e}")
-        return None
-
-def check_blacklist(email):
-    """Checks if an email exists in the Google Sheet Blacklist."""
-    sheet = get_gsheet()
-    if not sheet: return False
-    try:
-        blacklist_ws = sheet.worksheet("Blacklist")
-        # Optimization: col_values(1) gets the 'Email' column
-        return email in blacklist_ws.col_values(1)
-    except:
-        return False
-
-def add_to_blacklist(email):
-    """Adds a lead to the permanent suppression list."""
-    sheet = get_gsheet()
-    if not sheet: return
-    try:
-        blacklist_ws = sheet.worksheet("Blacklist")
-        if email not in blacklist_ws.col_values(1):
-            blacklist_ws.append_row([email, datetime.now().strftime("%Y-%m-%d")])
-    except Exception as e:
-        st.error(f"Error adding to blacklist: {e}")
+# --- REPLACEMENT DATABASE FUNCTIONS ---
+def get_conn():
+    return st.connection("gsheets", type=GSheetsConnection)
 
 def save_data():
     """Encrypts and saves entire vault to Google Sheets."""
     cipher = get_cipher()
-    sheet = get_gsheet()
-    if not cipher or not sheet: return
+    conn = get_conn()
+    if not cipher: return
 
     serializable = {}
     for name, info in st.session_state.clients.items():
@@ -86,41 +58,52 @@ def save_data():
     
     encrypted_blob = cipher.encrypt(json.dumps(serializable).encode()).decode()
     
-    try:
-        worksheet = sheet.worksheet("Clients")
-        # Update Row 2, Column 1 & 2
-        worksheet.update('A2', [["Master_Vault", encrypted_blob]])
-    except Exception as e:
-        st.error(f"Save Error: {e}")
+    # Update the 'Clients' worksheet
+    df = pd.DataFrame([["Master_Vault", encrypted_blob]], columns=["Name", "Data"])
+    conn.update(worksheet="Clients", data=df)
 
 def load_data():
-    """Loads and decrypts data ONLY from Google Sheets."""
+    """Loads and decrypts data from Google Sheets."""
     cipher = get_cipher()
-    sheet = get_gsheet()
-    if not sheet or not cipher: 
-        return
+    conn = get_conn()
+    if not cipher: return
 
     try:
-        worksheet = sheet.worksheet("Clients")
-        encrypted_blob = worksheet.acell('B2').value
-        
-        if not encrypted_blob: 
-            return
+        # Pull the 'Clients' worksheet
+        df = conn.read(worksheet="Clients", ttl=0)
+        if df.empty: return
 
+        encrypted_blob = df.iloc[0, 1] # Row 1, Column B
         decrypted_json = cipher.decrypt(encrypted_blob.encode()).decode()
         raw = json.loads(decrypted_json)
         
         for name, info in raw.items():
             if isinstance(info.get('leads'), str):
-                try:
-                    info['leads'] = pd.read_json(info['leads'])
-                except:
-                    info['leads'] = pd.DataFrame()
+                info['leads'] = pd.read_json(info['leads'])
             st.session_state.clients[name] = info
     except Exception as e:
-        # If the sheet is brand new/empty, we just skip loading
-        pass
+        pass # Handle empty or new database silently
 
+# --- BLACK LISTING ---
+def check_blacklist(email):
+    conn = get_conn()
+    try:
+        df = conn.read(worksheet="Blacklist", ttl=0)
+        return email in df.values
+    except:
+        return False
+
+def add_to_blacklist(email):
+    conn = get_conn()
+    try:
+        df = conn.read(worksheet="Blacklist", ttl=0)
+        new_row = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
+        df = pd.concat([df, new_row], ignore_index=True)
+        conn.update(worksheet="Blacklist", data=df)
+    except:
+        # Create sheet if it doesn't exist
+        df = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
+        conn.update(worksheet="Blacklist", data=df)
 # --- 4. DATA INITIALIZATION ---
 # This must come AFTER load_data is defined
 if 'clients' not in st.session_state:
