@@ -37,17 +37,19 @@ def add_to_blacklist(email):
         conn.update(worksheet="Blacklist", data=df)
 
 def check_blacklist(email):
+    """Checks the Google Form response sheet to see if an email has opted out."""
     conn = st.connection("gsheets", type=GSheetsConnection)
     try:
-        # We read the Sheet where the Google Form saves its data
+        # 1. Change "Form Responses 1" to the EXACT name of the tab in your Sheet
         df = conn.read(worksheet="Form Responses 1") 
         
-        # Check if the email exists in the column (usually titled 'Confirm your email address')
-        # We use .str.lower() to make sure 'Test@Email.com' matches 'test@email.com'
+        # 2. iloc[:, 1] looks at the second column (Column B) where the email is stored
+        # We make everything lowercase so 'Test@Email.com' matches 'test@email.com'
         blacklisted_emails = df.iloc[:, 1].astype(str).str.lower().values 
+        
         return email.lower() in blacklisted_emails
     except Exception as e:
-        # If the sheet is empty or doesn't exist yet, no one is blacklisted
+        # If the sheet is empty or the tab name is wrong, no one is blacklisted yet
         return False
 
 def save_data():
