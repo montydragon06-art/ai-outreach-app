@@ -114,19 +114,56 @@ def process_spreadsheet(file):
 
 def send_email_logic(client_info, lead, groq_key, cta_details):
     try:
+        # 1. Clean up data from the CSV
         s_name = str(lead.get('F_NAME', 'there')).strip()
-        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
+        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip() # This pulls from your SOURCE column
+        s_email = lead.get('F_EMAIL')
+        
         groq_client = Groq(api_key=groq_key)
         
-        prompt = f"Write a professional email body for {s_name}. Context: {client_info['desc']}. Mention we found them via {s_source}."
-        completion = groq_client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
+        # 2. THE SECURE PROMPT: This prevents the "AI chatter"
+        system_instruction = (
+            "You are a professional business assistant. Output ONLY the email body text. "
+            "Do NOT include subject lines, greetings like 'Sure!', or sign-offs like 'Hope this helps'. "
+            "Start directly with the first sentence of the email."
+        )
+        
+        user_prompt = f"""
+        Write a short, professional outreach email to {s_name}.
+        Business Context: {client_info['desc']}
+        Requirement: Mention we found their details via {s_source}.
+        Tone: Direct, helpful, and concise.
+        """
+
+        completion = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.5 # Lower temperature makes the AI less "creative" and more focused
+        )
+        
         ai_meat = completion.choices[0].message.content.strip().replace('\n', '<br>')
 
-        full_html = f"<html><body>Dear {s_name},<br><br>{ai_meat}</body></html>"
+        # 3. CONSTRUCT THE HTML WITH THE FOOTER
+        # This adds the mandatory disclosure at the bottom
+        footer_html = f"""
+        <br><br>
+        <hr style="border:none;border-top:1px solid #eee;" />
+        <p style="font-size:10px;color:#888;">
+            You are receiving this email because your contact information was sourced via <b>{s_source}</b>.<br>
+            To stop receiving these emails, <a href="{TRACKER_URL}?unsubscribe={s_email}">click here to unsubscribe</a>.
+        </p>
+        """
+
+        full_html = f"<html><body>Dear {s_name},<br><br>{ai_meat}{footer_html}</body></html>"
+        
+        # 4. EMAIL SENDING LOGIC
         msg = MIMEMultipart()
         msg['From'] = f"{client_info['name']} <{client_info['email']}>"
-        msg['To'] = lead.get('F_EMAIL')
-        msg['Subject'] = f"Question for {s_name}"
+        msg['To'] = s_email
+        msg['Subject'] = f"Quick question for {s_name}" # You can customize this
         msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
@@ -137,7 +174,6 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         return True
     except Exception as e: 
         return str(e)
-
 # --- 3. EXECUTION LOGIC (The actual running of the app) ---
 
 # Initialize session state and load cloud data
