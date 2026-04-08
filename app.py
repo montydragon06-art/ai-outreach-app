@@ -12,6 +12,7 @@ from cryptography.fernet import Fernet
 import base64
 import gspread
 from google.oauth2.service_account import Credentials
+from streamlit_gsheets import GSheetsConnection
 
 # --- Removal of any Opt-out emails ---
 # Check if the URL is an unsubscribe request
