@@ -174,6 +174,12 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         return True
     except Exception as e: 
         return str(e)
+if "unsubscribe" in st.query_params:
+    email_to_blacklist = st.query_params["unsubscribe"]
+    add_to_blacklist(email_to_blacklist) # Now this function is known to Python!
+    st.success(f"Successfully unsubscribed: {email_to_blacklist}")
+    st.info("You may now close this window.")
+    st.stop() # Stops the rest of the app from loading for the lead
 # --- 3. EXECUTION LOGIC (The actual running of the app) ---
 
 # Initialize session state and load cloud data
