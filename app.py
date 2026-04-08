@@ -113,19 +113,6 @@ def sync_clicks_from_google():
 # --- 2. DATA INITIALIZATION ---
 if 'clients' not in st.session_state:
     st.session_state.clients = {}
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r") as f:
-                raw = json.load(f)
-                for name, info in raw.items():
-                    if isinstance(info['leads'], str):
-                        info['leads'] = pd.read_json(info['leads'])
-                    st.session_state.clients[name] = info
-        except Exception as e:
-            st.session_state.clients = {}
-    else:
-        st.session_state.clients = {}
-
 # --- 3. CORE FUNCTIONS ---
 def process_spreadsheet(file):
     try:
