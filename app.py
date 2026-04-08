@@ -13,7 +13,8 @@ import base64
 from cryptography.fernet import Fernet
 import json
 import os
-
+import gspread
+from google.oauth2.service_account import Credentials
 # --- ENCRYPTION HELPERS ---
 def get_cipher():
     """Retrieves the key from Streamlit Secrets and creates a Cipher object."""
@@ -23,10 +24,21 @@ def get_cipher():
     except Exception as e:
         st.error("Master Key missing or invalid in Streamlit Secrets!")
         return None
+def check_blacklist(email):
+    """Checks if an email exists in the Google Sheet Blacklist."""
+    sheet = get_gsheet()
+    if not sheet: return False
+    blacklist_ws = sheet.worksheet("Blacklist")
+    # Search the 'Email' column
+    return email in blacklist_ws.col_values(1)
 
-import gspread
-from google.oauth2.service_account import Credentials
-
+def add_to_blacklist(email):
+    """Adds a lead to the permanent suppression list."""
+    sheet = get_gsheet()
+    if not sheet: return
+    blacklist_ws = sheet.worksheet("Blacklist")
+    if email not in blacklist_ws.col_values(1):
+        blacklist_ws.append_row([email, datetime.now().strftime("%Y-%m-%d")])
 # --- DATABASE CONNECTION ---
 def get_gsheet():
     """Connects to Google Sheets using the Sheet ID from secrets."""
