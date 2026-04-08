@@ -188,7 +188,6 @@ with st.sidebar:
 # --- PAGE 1: CREATE CLIENT ---
 if page == "Create Client":
     st.header("Create New Client")
-    # Added clear_on_submit to reset the form after successful saving
     with st.form("create_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
@@ -208,8 +207,7 @@ if page == "Create Client":
         if st.form_submit_button("Submit"):
             if name and file:
                 df = process_spreadsheet(file)
-                
-                # 1. Update session state first
+                # Save into session state with safety defaults
                 st.session_state.clients[name] = {
                     "name": name, 
                     "desc": desc, 
@@ -219,20 +217,18 @@ if page == "Create Client":
                     "auto_days": days, 
                     "cta_aim": cta_aim, 
                     "cta_link": cta_link,
+                    "auto_cta_type": "Link Click", # Default strategy
+                    "cta_action": "Reply 'YES'",    # Default action
                     "tone": tone, 
                     "leads": df, 
                     "send_log": [], 
                     "clicks": 0 
                 }
-                
-                # 2. Commit to the JSON file permanently
-                save_data() 
-                
-                # 3. Success message and force refresh
-                st.success(f"Client '{name}' successfully saved to the Vault!")
-                st.rerun() 
+                save_data()
+                st.success(f"Client '{name}' successfully saved to Vault!")
+                st.rerun()
             else:
-                st.error("Please provide both a Business Name and a Leads file.")
+                st.error("Missing Business Name or Leads File.")
 # --- PAGE 2: CLIENT VAULT ---
 elif page == "Client Vault":
     for c_name, c_data in list(st.session_state.clients.items()):
