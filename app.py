@@ -37,11 +37,17 @@ def add_to_blacklist(email):
         conn.update(worksheet="Blacklist", data=df)
 
 def check_blacklist(email):
-    conn = get_conn()
+    conn = st.connection("gsheets", type=GSheetsConnection)
     try:
-        df = conn.read(worksheet="Blacklist")
-        return email in df["Email"].values
-    except:
+        # We read the Sheet where the Google Form saves its data
+        df = conn.read(worksheet="Form Responses 1") 
+        
+        # Check if the email exists in the column (usually titled 'Confirm your email address')
+        # We use .str.lower() to make sure 'Test@Email.com' matches 'test@email.com'
+        blacklisted_emails = df.iloc[:, 1].astype(str).str.lower().values 
+        return email.lower() in blacklisted_emails
+    except Exception as e:
+        # If the sheet is empty or doesn't exist yet, no one is blacklisted
         return False
 
 def save_data():
