@@ -8,6 +8,8 @@ import requests
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from cryptography.fernet import Fernet
+import base64
 
 # --- 1. CONFIGURATION ---
 DATA_FILE = "agency_database.json"
