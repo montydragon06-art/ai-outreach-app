@@ -14,17 +14,41 @@ DATA_FILE = "agency_database.json"
 TRACKER_URL = "https://script.google.com/macros/s/AKfycbw0mdkl4yfLLHQcDh4B6nDqi39N8ZyetIdcSMrt5lrTKwuLWtV4CfIKRdR5tGxUXlTz/exec"
 SHEET_ID = "1fqMwLHV51IgbcjHM0y6rLIG1zciLPL7m_Z2gJ4ZA-tk"
 
+# --- 2. DATABASE FUNCTIONS ---
 def save_data():
+    """Converts the session state into a JSON-serializable format and saves it."""
     serializable = {}
     for name, info in st.session_state.clients.items():
-        serializable[name] = info.copy()
-        if isinstance(info['leads'], pd.DataFrame):
-            temp_df = info['leads'].copy()
-            temp_df.columns = [f"{col}_{i}" if duplicated else col 
-                              for i, (col, duplicated) in enumerate(zip(temp_df.columns, temp_df.columns.duplicated()))]
-            serializable[name]['leads'] = temp_df.to_json()
+        client_copy = info.copy()
+        # Convert DataFrame to JSON string for storage
+        if isinstance(info.get('leads'), pd.DataFrame):
+            client_copy['leads'] = info['leads'].to_json()
+        serializable[name] = client_copy
+        
     with open(DATA_FILE, "w") as f:
         json.dump(serializable, f)
+
+def load_data():
+    """Loads data from the JSON file into the session state."""
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                raw = json.load(f)
+                for name, info in raw.items():
+                    # Revert JSON string back to DataFrame
+                    if isinstance(info.get('leads'), str):
+                        try:
+                            info['leads'] = pd.read_json(info['leads'])
+                        except:
+                            info['leads'] = pd.DataFrame()
+                    st.session_state.clients[name] = info
+        except Exception as e:
+            st.error(f"Load Error: {e}")
+
+# Initialize Session State
+if 'clients' not in st.session_state:
+    st.session_state.clients = {}
+    load_data()
 
 def sync_clicks_from_google():
     try:
