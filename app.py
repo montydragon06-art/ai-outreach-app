@@ -13,6 +13,15 @@ import base64
 import gspread
 from google.oauth2.service_account import Credentials
 
+# --- Removal of any Opt-out emails ---
+# Check if the URL is an unsubscribe request
+if "unsubscribe" in st.query_params:
+    email_to_block = st.query_params["unsubscribe"]
+    add_to_blacklist(email_to_block)
+    st.title("Unsubscribed")
+    st.success(f"The address {email_to_block} has been removed from our mailing list.")
+    st.stop() # Prevents lead from seeing your dashboard
+
 # --- 1. SETTINGS & SECRETS ---
 # Define these at the top so the rest of the code can find them
 SHEET_ID = st.secrets.get("gsheet_id", "")
