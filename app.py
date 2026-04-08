@@ -230,77 +230,113 @@ if page == "Create Client":
             else:
                 st.error("Missing Business Name or Leads File.")
 # --- PAGE 2: CLIENT VAULT ---
-# --- PAGE 2: CLIENT VAULT ---
 elif page == "Client Vault":
     st.header("Client Vault")
     
     if not st.session_state.clients:
         st.info("The vault is empty. Create a client to get started.")
     else:
+        # We use a list to avoid "dictionary changed size during iteration" errors
         for c_name in list(st.session_state.clients.keys()):
             c_data = st.session_state.clients[c_name]
             
             with st.expander(f"🏢 {c_name}"):
-                t1, t2, t3 = st.tabs(["Profile", "Automation", "Manual Send"])
+                t1, t2, t3 = st.tabs(["Edit Profile", "Automation Settings", "Manual Batch Send"])
                 
-                # TAB 1: PROFILE
+                # --- TAB 1: EDIT PROFILE (Restored All Fields) ---
                 with t1:
-                    c_data['name'] = st.text_input("Biz Name", c_data['name'], key=f"n_{c_name}")
-                    c_data['desc'] = st.text_area("Description", c_data['desc'], key=f"d_{c_name}")
-                    if st.button("Save Changes", key=f"sv_p_{c_name}"):
-                        save_data(); st.success("Profile Updated!")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        c_data['name'] = st.text_input("Business Name", c_data.get('name', c_name), key=f"n_{c_name}")
+                        c_data['email'] = st.text_input("Sender Email", c_data.get('email', ''), key=f"e_{c_name}")
+                        c_data['app_pw'] = st.text_input("App Password", c_data.get('app_pw', ''), type="password", key=f"p_{c_name}")
+                    with col2:
+                        c_data['tone'] = st.selectbox("Tone", ["Professional", "Friendly", "Direct", "Witty"], 
+                                                     index=["Professional", "Friendly", "Direct", "Witty"].index(c_data.get('tone', 'Professional')),
+                                                     key=f"t_{c_name}")
+                        c_data['desc'] = st.text_area("Business Description", c_data.get('desc', ''), key=f"d_{c_name}")
                     
-                    st.divider()
-                    with st.expander("Danger Zone"):
-                        if st.button(f"Delete {c_name}", key=f"del_{c_name}", type="primary"):
-                            del st.session_state.clients[c_name]
-                            save_data(); st.rerun()
+                    if st.button("Save Profile Changes", key=f"sv_p_{c_name}"):
+                        save_data()
+                        st.success("Profile Updated and Saved!")
 
-                # TAB 2: AUTOMATION
+                    st.divider()
+                    with st.expander("⚠️ Danger Zone"):
+                        if st.button(f"Delete {c_name} Permanently", key=f"del_{c_name}", type="primary"):
+                            del st.session_state.clients[c_name]
+                            save_data()
+                            st.rerun()
+
+                # --- TAB 2: AUTOMATION SETTINGS ---
                 with t2:
-                    c_data['auto_on'] = st.toggle("Automation Active", c_data.get('auto_on', False), key=f"at_{c_name}")
-                    # Strategy Picker
-                    current_strat = c_data.get('auto_cta_type', "Link Click")
-                    strat_idx = 0 if current_strat == "Link Click" else 1
+                    c_data['auto_on'] = st.toggle("Enable Automation", c_data.get('auto_on', False), key=f"at_{c_name}")
                     
-                    c_data['auto_cta_type'] = st.selectbox("Strategy", ["Link Click", "Direct Reply"], index=strat_idx, key=f"acta_{c_name}")
+                    # Logic to handle Strategy selection
+                    current_strat = c_data.get('auto_cta_type', "Link Click")
+                    strat_options = ["Link Click", "Direct Reply"]
+                    strat_idx = strat_options.index(current_strat) if current_strat in strat_options else 0
+                    
+                    c_data['auto_cta_type'] = st.selectbox("Campaign Strategy", strat_options, index=strat_idx, key=f"acta_{c_name}")
                     
                     if c_data['auto_cta_type'] == "Link Click":
-                        c_data['cta_aim'] = st.text_input("CTA Goal", c_data.get('cta_aim', ''), key=f"aa_{c_name}")
+                        c_data['cta_aim'] = st.text_input("CTA Goal (e.g., Book a Call)", c_data.get('cta_aim', ''), key=f"aa_{c_name}")
                         c_data['cta_link'] = st.text_input("Link URL", c_data.get('cta_link', ''), key=f"al_{c_name}")
                     else:
-                        c_data['cta_aim'] = st.text_area("The Offer", c_data.get('cta_aim', ''), key=f"off_{c_name}")
-                        c_data['cta_action'] = st.text_input("Required Action", c_data.get('cta_action', "Reply 'YES'"), key=f"act_{c_name}")
+                        c_data['cta_aim'] = st.text_area("The Offer/Ask", c_data.get('cta_aim', ''), key=f"off_{c_name}")
+                        c_data['cta_action'] = st.text_input("Required Action (e.g., Reply YES)", c_data.get('cta_action', "Reply to this email"), key=f"act_{c_name}")
 
-                    if st.button("Save Automation", key=f"sv_a_{c_name}"):
-                        save_data(); st.success("Saved!")
+                    if st.button("Save Automation Settings", key=f"sv_a_{c_name}"):
+                        save_data()
+                        st.success("Automation Saved!")
 
-                # TAB 3: MANUAL SEND
+                # --- TAB 3: MANUAL BATCH SEND (Fixed Batch Logic) ---
                 with t3:
+                    st.subheader("Send Batch Now")
                     m_type = st.radio("Strategy for this Batch", ["Link Click", "Direct Reply"], horizontal=True, key=f"mt_{c_name}")
                     
                     if m_type == "Link Click":
-                        m_aim = st.text_input("Goal for batch", key=f"ma_{c_name}")
-                        m_link = st.text_input("Link", c_data.get('cta_link', ''), key=f"ml_{c_name}")
+                        m_aim = st.text_input("Batch Goal", value=c_data.get('cta_aim', ''), key=f"ma_{c_name}")
+                        m_link = st.text_input("Batch Link", value=c_data.get('cta_link', ''), key=f"ml_{c_name}")
                         m_action = ""
                     else:
-                        m_aim = st.text_area("The Offer", key=f"moff_{c_name}")
-                        m_action = st.text_input("Action", "Reply 'YES' to this email", key=f"mact_{c_name}")
+                        m_aim = st.text_area("Batch Offer", value=c_data.get('cta_aim', ''), key=f"moff_{c_name}")
+                        m_action = st.text_input("Batch Action", value=c_data.get('cta_action', "Reply to this email"), key=f"mact_{c_name}")
                         m_link = ""
 
-                    if st.button("🚀 Start Batch", key=f"sb_{c_name}"):
-                        # Combine aim and action for AI if it's a reply campaign
-                        final_aim = f"{m_aim}. Action required: {m_action}" if m_type == "Direct Reply" else m_aim
-                        
-                        for _, lead in c_data['leads'].iterrows():
-                            res = send_email_logic(c_data, lead, st.session_state.g_key, 
-                                                   {"aim": final_aim, "link": m_link, "type": m_type})
+                    if st.button("🚀 Execute Batch Send", key=f"sb_{c_name}"):
+                        # Safety check for GROQ Key
+                        if not st.session_state.get('g_key'):
+                            st.error("Please enter your GROQ API Key in the sidebar first!")
+                        else:
+                            progress_bar = st.progress(0)
+                            leads_df = c_data['leads']
+                            total_leads = len(leads_df)
                             
-                            c_data.setdefault('send_log', []).append({
-                                "Client": c_name, "Time": datetime.now().strftime("%Y-%m-%d"), 
-                                "Lead": lead.get('F_EMAIL', 'N/A'), "Status": "Success" if res==True else res
-                            })
-                        save_data(); st.success("Batch Sent!"); st.rerun()
+                            # Prepare details for the email function
+                            # We combine aim and action for the AI prompt here
+                            final_aim = f"{m_aim}. Required Action: {m_action}" if m_type == "Direct Reply" else m_aim
+                            
+                            for i, (_, lead) in enumerate(leads_df.iterrows()):
+                                # CALL THE SENDING LOGIC
+                                res = send_email_logic(
+                                    c_data, 
+                                    lead, 
+                                    st.session_state.g_key, 
+                                    {"aim": final_aim, "link": m_link, "type": m_type}
+                                )
+                                
+                                # Log the result
+                                c_data.setdefault('send_log', []).append({
+                                    "Client": c_name, 
+                                    "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                                    "Lead": lead.get('F_EMAIL', 'Unknown'), 
+                                    "Status": "Success" if res == True else f"Error: {res}"
+                                })
+                                progress_bar.progress((i + 1) / total_leads)
+                            
+                            save_data()
+                            st.success(f"Batch complete! Sent to {total_leads} leads.")
+                            st.rerun()
 # --- PAGE 3: EMAIL LOGS ---
 elif page == "Email Logs":
     st.header("Email History")
