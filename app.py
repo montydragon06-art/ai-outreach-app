@@ -112,58 +112,41 @@ def process_spreadsheet(file):
         st.error(f"File Error: {e}")
         return pd.DataFrame()
 
-def send_email_logic(client_info, lead, groq_key, cta_details):
+def send_email_logic(client_info, lead, groq_key):
     try:
-        # 1. Clean up data from the CSV
         s_name = str(lead.get('F_NAME', 'there')).strip()
-        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip() # This pulls from your SOURCE column
+        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
         s_email = lead.get('F_EMAIL')
         
         groq_client = Groq(api_key=groq_key)
         
-        # 2. THE SECURE PROMPT: This prevents the "AI chatter"
-        system_instruction = (
-            "You are a professional business assistant. Output ONLY the email body text. "
-            "Do NOT include subject lines, greetings like 'Sure!', or sign-offs like 'Hope this helps'. "
-            "Start directly with the first sentence of the email."
-        )
-        
-        user_prompt = f"""
-        Write a short, professional outreach email to {s_name}.
-        Business Context: {client_info['desc']}
-        Requirement: Mention we found their details via {s_source}.
-        Tone: Direct, helpful, and concise.
-        """
+        # BOXING IN THE AI: Explicit system instruction to stop the "chatter"
+        system_msg = "You are a professional assistant. Output ONLY the email body. No conversational filler, no 'Sure!', no sign-offs."
+        user_msg = f"Write a 2-sentence outreach email to {s_name} regarding {client_info['desc']}. Mention we found them via {s_source}."
 
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.5 # Lower temperature makes the AI less "creative" and more focused
+            messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
+            temperature=0.3 # Low temperature = less "funny business"
         )
-        
-        ai_meat = completion.choices[0].message.content.strip().replace('\n', '<br>')
+        ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
 
-        # 3. CONSTRUCT THE HTML WITH THE FOOTER
-        # This adds the mandatory disclosure at the bottom
-        footer_html = f"""
+        # THE FOOTER (Mandatory source disclosure)
+        footer = f"""
         <br><br>
         <hr style="border:none;border-top:1px solid #eee;" />
-        <p style="font-size:10px;color:#888;">
-            You are receiving this email because your contact information was sourced via <b>{s_source}</b>.<br>
-            To stop receiving these emails, <a href="{TRACKER_URL}?unsubscribe={s_email}">click here to unsubscribe</a>.
+        <p style="font-size:11px;color:#666;">
+            Found via: {s_source} | 
+            <a href="{TRACKER_URL}?unsubscribe={s_email}">Unsubscribe</a>
         </p>
         """
-
-        full_html = f"<html><body>Dear {s_name},<br><br>{ai_meat}{footer_html}</body></html>"
         
-        # 4. EMAIL SENDING LOGIC
+        full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
+        
         msg = MIMEMultipart()
         msg['From'] = f"{client_info['name']} <{client_info['email']}>"
         msg['To'] = s_email
-        msg['Subject'] = f"Quick question for {s_name}" # You can customize this
+        msg['Subject'] = f"Regarding {s_name}"
         msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
@@ -172,7 +155,7 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         server.send_message(msg)
         server.quit()
         return True
-    except Exception as e: 
+    except Exception as e:
         return str(e)
 if "unsubscribe" in st.query_params:
     email_to_blacklist = st.query_params["unsubscribe"]
