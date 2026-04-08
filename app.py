@@ -15,12 +15,13 @@ TRACKER_URL = "https://script.google.com/macros/s/AKfycbw0mdkl4yfLLHQcDh4B6nDqi3
 SHEET_ID = "1fqMwLHV51IgbcjHM0y6rLIG1zciLPL7m_Z2gJ4ZA-tk"
 
 # --- 2. DATABASE FUNCTIONS ---
+# --- DATABASE FUNCTIONS ---
 def save_data():
-    """Converts the session state into a JSON-serializable format and saves it."""
+    """Converts session state to JSON and writes to disk."""
     serializable = {}
     for name, info in st.session_state.clients.items():
         client_copy = info.copy()
-        # Convert DataFrame to JSON string for storage
+        # Convert the Leads DataFrame to a JSON string for storage
         if isinstance(info.get('leads'), pd.DataFrame):
             client_copy['leads'] = info['leads'].to_json()
         serializable[name] = client_copy
@@ -29,23 +30,24 @@ def save_data():
         json.dump(serializable, f)
 
 def load_data():
-    """Loads data from the JSON file into the session state."""
+    """Reads the JSON file and populates session state."""
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r") as f:
                 raw = json.load(f)
                 for name, info in raw.items():
-                    # Revert JSON string back to DataFrame
+                    # Convert the stored JSON string back into a Pandas DataFrame
                     if isinstance(info.get('leads'), str):
                         try:
                             info['leads'] = pd.read_json(info['leads'])
-                        except:
+                        except Exception:
                             info['leads'] = pd.DataFrame()
                     st.session_state.clients[name] = info
         except Exception as e:
-            st.error(f"Load Error: {e}")
+            st.error(f"Error loading database: {e}")
 
-# Initialize Session State
+# --- CRITICAL INITIALIZATION ---
+# This must run before any other UI elements are created
 if 'clients' not in st.session_state:
     st.session_state.clients = {}
     load_data()
