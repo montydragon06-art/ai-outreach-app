@@ -99,7 +99,17 @@ def send_email_logic(client_info, lead, groq_key):
         )
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
 
-        footer = f"""<br><br><hr/><p style="font-size:11px;color:#666;">Found via: {s_source} | <a href="{TRACKER_URL}?unsubscribe={s_email}">Unsubscribe</a></p>"""
+        # Use your public Form link here
+        form_url = "https://docs.google.com/forms/d/e/1FAIpQLScBMsqCrO8tKVW4nYLUOVgAewzqUdrom-VXPPPrhsgxPY0rzg/viewform"
+        
+        footer = f"""
+        <br><br>
+        <hr style="border:none;border-top:1px solid #eee;" />
+        <p style="font-size:11px;color:#666;">
+            Found via: {s_source} | 
+            <a href="{form_url}">Click here to Unsubscribe</a>
+        </p>
+        """
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
         msg = MIMEMultipart()
