@@ -10,49 +10,69 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from cryptography.fernet import Fernet
 import base64
-# --- 1. CONFIGURATION ---
-DATA_FILE = "agency_database.json"
-TRACKER_URL = "https://script.google.com/macros/s/AKfycbw0mdkl4yfLLHQcDh4B6nDqi39N8ZyetIdcSMrt5lrTKwuLWtV4CfIKRdR5tGxUXlTz/exec"
-SHEET_ID = "1fqMwLHV51IgbcjHM0y6rLIG1zciLPL7m_Z2gJ4ZA-tk"
+from cryptography.fernet import Fernet
+import json
+import os
 
-# --- 2. DATABASE FUNCTIONS ---
-# --- DATABASE FUNCTIONS ---
+# --- ENCRYPTION HELPERS ---
+def get_cipher():
+    """Retrieves the key from Streamlit Secrets and creates a Cipher object."""
+    try:
+        key = st.secrets["master_key"]
+        return Fernet(key.encode())
+    except Exception as e:
+        st.error("Master Key missing or invalid in Streamlit Secrets!")
+        return None
+
 def save_data():
-    """Converts session state to JSON and writes to disk."""
+    """Encrypts and saves session state to disk."""
+    cipher = get_cipher()
+    if not cipher:
+        return
+
     serializable = {}
     for name, info in st.session_state.clients.items():
         client_copy = info.copy()
-        # Convert the Leads DataFrame to a JSON string for storage
         if isinstance(info.get('leads'), pd.DataFrame):
             client_copy['leads'] = info['leads'].to_json()
         serializable[name] = client_copy
-        
-    with open(DATA_FILE, "w") as f:
-        json.dump(serializable, f)
+    
+    # 1. Convert to JSON string
+    json_string = json.dumps(serializable)
+    # 2. Encrypt
+    encrypted_data = cipher.encrypt(json_string.encode())
+    
+    # 3. Write binary to file
+    with open(DATA_FILE, "wb") as f:
+        f.write(encrypted_data)
 
 def load_data():
-    """Reads the JSON file and populates session state."""
-    if os.path.exists(DATA_FILE):
+    """Loads and decrypts data from disk into session state."""
+    cipher = get_cipher()
+    if os.path.exists(DATA_FILE) and cipher:
         try:
-            with open(DATA_FILE, "r") as f:
-                raw = json.load(f)
-                for name, info in raw.items():
-                    # Convert the stored JSON string back into a Pandas DataFrame
-                    if isinstance(info.get('leads'), str):
-                        try:
-                            info['leads'] = pd.read_json(info['leads'])
-                        except Exception:
-                            info['leads'] = pd.DataFrame()
-                    st.session_state.clients[name] = info
+            with open(DATA_FILE, "rb") as f:
+                encrypted_content = f.read()
+            
+            # 1. Decrypt
+            decrypted_json = cipher.decrypt(encrypted_content).decode()
+            # 2. Parse
+            raw = json.loads(decrypted_json)
+            
+            for name, info in raw.items():
+                if isinstance(info.get('leads'), str):
+                    try:
+                        info['leads'] = pd.read_json(info['leads'])
+                    except:
+                        info['leads'] = pd.DataFrame()
+                st.session_state.clients[name] = info
         except Exception as e:
-            st.error(f"Error loading database: {e}")
+            st.error(f"Security Load Error: {e}. Check your Master Key.")
 
 # --- CRITICAL INITIALIZATION ---
-# This must run before any other UI elements are created
 if 'clients' not in st.session_state:
     st.session_state.clients = {}
     load_data()
-
 def sync_clicks_from_google():
     try:
         csv_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
