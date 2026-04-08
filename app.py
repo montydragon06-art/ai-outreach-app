@@ -24,18 +24,6 @@ def get_cipher():
     except:
         st.error("Master Key missing in Secrets!")
         return None
-
-def add_to_blacklist(email):
-    conn = get_conn()
-    try:
-        df = conn.read(worksheet="Blacklist")
-        new_row = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
-        df = pd.concat([df, new_row], ignore_index=True).drop_duplicates()
-        conn.update(worksheet="Blacklist", data=df)
-    except:
-        df = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
-        conn.update(worksheet="Blacklist", data=df)
-
 def check_blacklist(email):
     """Checks the Google Form response sheet to see if an email has opted out."""
     conn = st.connection("gsheets", type=GSheetsConnection)
