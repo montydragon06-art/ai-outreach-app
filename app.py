@@ -11,7 +11,7 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- 1. SETTINGS & SECRETS ---
 SHEET_ID = st.secrets.get("gsheet_id", "")
-TRACKER_URL = st.secrets.get("tracker_url", "https://your-tracker-link.com")
+TRACKER_URL = st.secrets.get("tracker_url", "")
 
 # --- 2. CORE HELPER FUNCTIONS (Must be defined before they are called) ---
 
@@ -23,11 +23,6 @@ def get_cipher():
     except:
         st.error("Master Key missing or invalid in Streamlit Secrets!")
         return None
-
-def get_conn():
-    """Establishes connection to Google Sheets."""
-    return st.connection("gsheets", type=GSheetsConnection)
-
 def save_data():
     """Encrypts and saves entire vault to Google Sheets."""
     cipher = get_cipher()
@@ -67,27 +62,29 @@ def load_data():
     except:
         pass
 
+def get_conn():
+    return st.connection("gsheets", type=GSheetsConnection)
+
 def add_to_blacklist(email):
-    """Adds an email to the Google Sheet blacklist."""
     conn = get_conn()
     try:
+        # Read existing blacklist
         df = conn.read(worksheet="Blacklist")
         new_row = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
         df = pd.concat([df, new_row], ignore_index=True).drop_duplicates()
         conn.update(worksheet="Blacklist", data=df)
     except:
+        # Create new if it fails
         df = pd.DataFrame([[email, datetime.now().strftime("%Y-%m-%d")]], columns=["Email", "Date"])
         conn.update(worksheet="Blacklist", data=df)
 
 def check_blacklist(email):
-    """Checks if an email is in the blacklist."""
     conn = get_conn()
     try:
         df = conn.read(worksheet="Blacklist")
-        return email in df.values
+        return email in df["Email"].values
     except:
         return False
-
 def sync_clicks_from_google():
     """Syncs click data from the Clicks worksheet."""
     conn = get_conn()
