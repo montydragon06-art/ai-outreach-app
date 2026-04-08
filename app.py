@@ -124,6 +124,9 @@ def process_spreadsheet(file):
 def send_email_logic(client_info, lead, groq_key, cta_details):
     try:
         s_name = str(lead.get('F_NAME', 'there')).strip()
+        # Retrieve the Source from the lead data
+        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
+        
         client = Groq(api_key=groq_key)
         
         # Determine the Strategy
@@ -144,9 +147,9 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
             I will handle the link; you just write the persuasive body.
             """
 
-        # The "Unbreakable" Prompt
+        # Updated "Unbreakable" Prompt with Source Requirement
         prompt = f"""
-        You are writing ONLY the 2 middle paragraphs of a professional email from {client_info['name']}.
+        You are writing ONLY the body paragraphs of a professional email from {client_info['name']}.
         Context: {client_info['desc']}
         Recipient: {s_name}
 
@@ -154,10 +157,11 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
 
         STRICT CONSTRAINTS:
         1. Write ONLY the body paragraphs.
-        2. NO greetings (No 'Dear', No 'Hi').
-        3. NO sign-offs (No 'Best regards', No names).
-        4. NO placeholders (No brackets [] or caps like [INSERT INFO]).
-        5. Tone: {client_info.get('tone', 'Professional')}.
+        2. NO greetings or sign-offs.
+        3. NO placeholders.
+        4. Tone: {client_info.get('tone', 'Professional')}.
+        5. MANDATORY: The very last sentence must be a brief, professional disclosure stating we found their contact info via {s_source}.
+           Example: "We reached out because your details were listed on {s_source}."
         """
         
         completion = client.chat.completions.create(
@@ -166,13 +170,13 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
         )
         ai_meat = completion.choices[0].message.content.strip().replace('\n', '<br>')
         
-        # Link Assembly (System-side, invisible to AI)
+        # Link Assembly
         link_html = ""
         if not is_reply_campaign:
             tracking_url = f"{TRACKER_URL}?client={client_info['name'].replace(' ', '%20')}"
             link_html = f'<br><br><a href="{tracking_url}" target="_top" style="color: #007bff; font-weight: bold; text-decoration: underline;">Visit Our Website</a>'
 
-        # The Final Sandwich
+        # The Final Sandwich with Legal Footer
         full_html = f"""
         <html>
           <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">
@@ -181,6 +185,14 @@ def send_email_logic(client_info, lead, groq_key, cta_details):
             {link_html}<br><br>
             Best regards,<br>
             The {client_info['name']} Team
+            
+            <br><br>
+            <hr style="border: 0; border-top: 1px solid #eee;">
+            <div style="font-size: 10px; color: #888; line-height: 1.2;">
+                This email was sent to {lead.get('F_EMAIL')} based on legitimate interest for business-to-business networking. 
+                Data processed in accordance with UK GDPR. Information sourced via {s_source}. 
+                To opt-out of future correspondence, please reply to this email with "Unsubscribe".
+            </div>
           </body>
         </html>
         """
