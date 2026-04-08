@@ -24,12 +24,28 @@ def get_cipher():
         st.error("Master Key missing or invalid in Streamlit Secrets!")
         return None
 
-def save_data():
-    """Encrypts and saves session state to disk."""
-    cipher = get_cipher()
-    if not cipher:
-        return
+import gspread
+from google.oauth2.service_account import Credentials
 
+# --- DATABASE CONNECTION ---
+def get_gsheet():
+    """Connects to Google Sheets using the Sheet ID from secrets."""
+    try:
+        # For simplicity, we use the library's ability to pick up credentials 
+        # or you can paste a JSON dict into secrets
+        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        return gc.open_by_key(st.secrets["gsheet_id"])
+    except Exception as e:
+        st.error(f"Database Connection Error: {e}")
+        return None
+
+def save_data():
+    """Encrypts and saves entire vault to Google Sheets."""
+    cipher = get_cipher() [cite: 27]
+    sheet = get_gsheet()
+    if not cipher or not sheet: return
+
+    # Prepare data for encryption [cite: 30-35]
     serializable = {}
     for name, info in st.session_state.clients.items():
         client_copy = info.copy()
@@ -37,39 +53,38 @@ def save_data():
             client_copy['leads'] = info['leads'].to_json()
         serializable[name] = client_copy
     
-    # 1. Convert to JSON string
-    json_string = json.dumps(serializable)
-    # 2. Encrypt
-    encrypted_data = cipher.encrypt(json_string.encode())
+    # Encrypt [cite: 37-39]
+    encrypted_blob = cipher.encrypt(json.dumps(serializable).encode()).decode()
     
-    # 3. Write binary to file
-    with open(DATA_FILE, "wb") as f:
-        f.write(encrypted_data)
+    # Write to 'Clients' tab (Row 2, Column 1 for Name; Row 2, Column 2 for Blob)
+    worksheet = sheet.worksheet("Clients")
+    worksheet.update('A2', [["Master_Vault", encrypted_blob]])
 
 def load_data():
-    """Loads and decrypts data from disk into session state."""
-    # 1. YOU MUST DEFINE CIPHER FIRST
-    cipher = get_cipher() 
-    
-    # 2. NOW YOU CAN CHECK IF IT EXISTS
-    if os.path.exists(DATA_FILE) and cipher:
-        try:
-            with open(DATA_FILE, "rb") as f:
-                encrypted_content = f.read()
-            
-            # Decrypt and parse
-            decrypted_json = cipher.decrypt(encrypted_content).decode()
-            raw = json.loads(decrypted_json)
-            
-            for name, info in raw.items():
-                if isinstance(info.get('leads'), str):
-                    try:
-                        info['leads'] = pd.read_json(info['leads'])
-                    except:
-                        info['leads'] = pd.DataFrame()
-                st.session_state.clients[name] = info
-        except Exception as e:
-            st.error(f"Security Load Error: {e}. Check your Master Key.")
+    """Loads and decrypts data from Google Sheets."""
+    cipher = get_cipher() [cite: 46]
+    sheet = get_gsheet()
+    if not sheet or not cipher: return
+
+    try:
+        worksheet = sheet.worksheet("Clients")
+        encrypted_blob = worksheet.acell('B2').value
+        
+        if not encrypted_blob: return
+
+        # Decrypt [cite: 53-54]
+        decrypted_json = cipher.decrypt(encrypted_blob.encode()).decode()
+        raw = json.loads(decrypted_json)
+        
+        for name, info in raw.items():
+            if isinstance(info.get('leads'), str):
+                try:
+                    info['leads'] = pd.read_json(info['leads']) [cite: 58]
+                except:
+                    info['leads'] = pd.DataFrame()
+            st.session_state.clients[name] = info [cite: 61]
+    except Exception as e:
+        st.error(f"Database Load Error: {e}")
 def sync_clicks_from_google():
     try:
         csv_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
