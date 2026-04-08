@@ -93,16 +93,18 @@ def save_data():
         st.error(f"Save Error: {e}")
 
 def load_data():
-    """Loads and decrypts data from Google Sheets."""
+    """Loads and decrypts data ONLY from Google Sheets."""
     cipher = get_cipher()
     sheet = get_gsheet()
-    if not sheet or not cipher: return
+    if not sheet or not cipher: 
+        return
 
     try:
         worksheet = sheet.worksheet("Clients")
         encrypted_blob = worksheet.acell('B2').value
         
-        if not encrypted_blob: return
+        if not encrypted_blob: 
+            return
 
         decrypted_json = cipher.decrypt(encrypted_blob.encode()).decode()
         raw = json.loads(decrypted_json)
@@ -115,7 +117,7 @@ def load_data():
                     info['leads'] = pd.DataFrame()
             st.session_state.clients[name] = info
     except Exception as e:
-        # Don't show error if it's just an empty sheet
+        # If the sheet is brand new/empty, we just skip loading
         pass
 
 # --- 4. DATA INITIALIZATION ---
