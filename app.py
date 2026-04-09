@@ -126,55 +126,49 @@ def get_statistics():
         return pd.DataFrame()
 
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input):
-    """
-    Fixed & Secure Email Logic:
-    - Handles Click Tracking Redirects
-    - Lie-proof AI Prompting (No placeholders, no hallucinations)
-    - Strict length control
-    """
     try:
         # 1. Prepare Lead & Client Variables
         s_name = str(lead.get('F_NAME', 'there')).strip()
         s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
         s_email = str(lead.get('F_EMAIL', '')).strip()
-        client_name = client_info['name']
+        sender_business_name = client_info['name'] # This is YOUR client
         
-        # 2. Build Tracking Link or Standard CTA
+        # 2. Build Tracking Link
         if send_type == 'link' and str(cta_input).startswith("http"):
-            # Format the tracking link for your Google Apps Script
             final_link = (
                 f"{TRACKER_URL}?"
                 f"dest={cta_input}&"
-                f"client={client_name.replace(' ', '%20')}&"
+                f"client={sender_business_name.replace(' ', '%20')}&"
                 f"email={s_email}"
             )
-            cta_context = f"Direct the user to click this exact tracking link: {final_link}"
+            cta_context = f"Direct the individual to click this link: {final_link}"
         else:
-            cta_context = f"Instruction: {cta_input}. Ensure the user knows to reply directly to this email."
+            cta_context = f"Instruction: {cta_input}. Tell them to reply to this email."
 
-        # 3. AI Generation with strict safety guardrails
+        # 3. Secure & Precise AI Prompt
         groq_client = Groq(api_key=groq_key)
         
-        # Secure System Instructions
         system_msg = (
-            "You are a professional business assistant. Your output must be ONLY the email body. "
+            f"You are writing an email on behalf of '{sender_business_name}'. "
+            f"You are writing TO an individual named '{s_name}'. "
             "STRICT RULES:\n"
-            "1. NO placeholders like [Name], [Company], or [Date]. Use the exact data provided.\n"
-            "2. DO NOT invent facts, services, or details not found in the description.\n"
-            "3. DO NOT use conversational filler (e.g., 'Here is the email').\n"
-            "4. MAXIMUM 3 short paragraphs. Be concise."
+            "1. NEVER use placeholders like [Your Name], [Company], or [Insert].\n"
+            "2. DO NOT sign off with a name placeholder. End the email body with a professional closing phrase only.\n"
+            "3. The recipient is an INDIVIDUAL, not a company. Do not treat them as a business entity.\n"
+            "4. NO LIES. Use only the business description provided.\n"
+            "5. OUTPUT ONLY THE EMAIL BODY."
         )
         
         user_msg = f"""
-        Business Name: {client_name}
-        Business Description: {client_info['desc']}
-        Lead Name: {s_name}
-        Source where we found them: {s_source}
-        Special Offer: {offer_input if offer_input else "None"}
-        Call to Action: {cta_context}
+        SENDER (My Client): {sender_business_name}
+        SENDER'S BUSINESS DESCRIPTION: {client_info['desc']}
+        RECIPIENT (The Lead): {s_name}
+        WHERE WE FOUND THEM: {s_source}
+        OFFER: {offer_input if offer_input else "None"}
+        CALL TO ACTION: {cta_context}
         
-        Write a professional outreach email. Use only the provided info. 
-        If you don't know a fact, don't mention it. Ensure the link or reply instruction is clear.
+        Write a 2-paragraph outreach email to {s_name}. 
+        Make it clear that {sender_business_name} is reaching out to them personally.
         """
 
         completion = groq_client.chat.completions.create(
@@ -183,22 +177,25 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
                 {"role": "system", "content": system_msg}, 
                 {"role": "user", "content": user_msg}
             ],
-            temperature=0.2 # Lower temperature = less "creativity" / fewer lies
+            temperature=0.1 # Minimum creativity to prevent hallucinations
         )
         
-        ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
+        ai_body = completion.choices[0].message.content.strip()
+        # Safety check: Remove any common AI placeholders if they slip through
+        ai_body = ai_body.replace("[Your Name]", "").replace("[Name]", "").replace("[Insert Name]", "")
+        ai_body = ai_body.replace('\n', '<br>')
 
-        # 4. Final Assembly (Email + Footer)
+        # 4. Assembly
         footer = f"""<br><br><hr/><p style="font-size:10px;color:#888;">
             Found via: {s_source} | <a href="{FORM_URL}">Unsubscribe</a> | <a href="{PRIVACY_PDF_URL}">Privacy Policy</a></p>"""
         
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
-        # 5. SMTP Sending
+        # 5. SMTP
         msg = MIMEMultipart()
-        msg['From'] = f"{client_name} <{client_info['email']}>"
+        msg['From'] = f"{sender_business_name} <{client_info['email']}>"
         msg['To'] = s_email
-        msg['Subject'] = f"Quick Update for {s_name}"
+        msg['Subject'] = f"Message from {sender_business_name}"
         msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
@@ -206,12 +203,10 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
         server.login(client_info['email'], client_info['app_pw'])
         server.send_message(msg)
         server.quit()
-        
         return True
         
     except Exception as e: 
-        return f"Error: {str(e)}"
-
+        return str(e)
 # --- 3. SESSION INITIALIZATION ---
 if 'clients' not in st.session_state:
     st.session_state.clients = {}
