@@ -13,6 +13,7 @@ import io
 # --- 1. SETTINGS & SECRETS ---
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScBMsqCrO8tKVW4nYLUOVgAewzqUdrom-VXPPPrhsgxPY0rzg/viewform"
 PRIVACY_PDF_URL = "https://docs.google.com/document/d/1OjaVW-V5VSXJ9k-mjncAj-xF4gHmVUQwVwrBlXTMxow/edit?usp=sharing"
+TRACKER_URL = "https://script.google.com/macros/s/AKfycbxQ45IQwiRw0WxDs9H8QZAFnkkFIHCIQHtMrc6sfEOYJBycj47Q_4EfaycZUJq96K0/exec"
 
 # --- 2. CORE FUNCTIONS ---
 
@@ -131,6 +132,17 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
     - cta_input: The link or the specific action required
     - offer_input: Special offer (if provided)
     """
+    if send_type == 'link' and cta_input.startswith("http"):
+            # This creates the link that logs the click before redirecting
+            final_link = (
+                f"{TRACKER_URL}?"
+                f"dest={cta_input}&"
+                f"client={client_name.replace(' ', '%20')}&"
+                f"email={s_email}"
+            )
+            cta_context = f"Include this EXACT tracking link as the Call to Action: {final_link}"
+        else:
+            cta_context = f"Requirement: {cta_input}. Ensure they know to reply directly to this email."
     try:
         s_name = str(lead.get('F_NAME', 'there')).strip()
         s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
