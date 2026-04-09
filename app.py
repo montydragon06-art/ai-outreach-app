@@ -40,34 +40,57 @@ def save_data():
     conn = get_conn()
     if not cipher or 'clients' not in st.session_state or not st.session_state.clients: 
         return
-    serializable = {}
-    for name, info in st.session_state.clients.items():
-        client_copy = info.copy()
-        if isinstance(info.get('leads'), pd.DataFrame):
-            client_copy['leads'] = info['leads'].to_json()
-        serializable[name] = client_copy
-    encrypted_blob = cipher.encrypt(json.dumps(serializable).encode()).decode()
-    df_to_save = pd.DataFrame([["Master_Vault", encrypted_blob]], columns=["Name", "Data"])
-    conn.update(worksheet="Clients", data=df_to_save)
+    
+    try:
+        serializable = {}
+        for name, info in st.session_state.clients.items():
+            client_copy = info.copy()
+            if isinstance(info.get('leads'), pd.DataFrame):
+                # Convert DataFrame to JSON string for storage
+                client_copy['leads'] = info['leads'].to_json()
+            serializable[name] = client_copy
+        
+        # Encrypt the full dictionary
+        encrypted_blob = cipher.encrypt(json.dumps(serializable).encode()).decode()
+        
+        # Create a 2-column DataFrame for the sheet
+        df_to_save = pd.DataFrame([["Master_Vault", encrypted_blob]], columns=["Name", "Data"])
+        
+        # THE FIX: Explicitly tell GSheets to clear and update the data
+        conn.update(worksheet="Clients", data=df_to_save)
+        # st.toast("Cloud Save Successful") # Optional: shows a little popup
+    except Exception as e:
+        st.error(f"❌ Save Failed: {str(e)}")
 
 def load_data():
     cipher = get_cipher()
     conn = get_conn()
     if not cipher: return
     try:
-        df = conn.read(worksheet="Clients")
-        if df.empty: return
+        # Load the raw data from the 'Clients' tab
+        df = conn.read(worksheet="Clients", ttl=0) # ttl=0 ensures we don't load old cached data
+        if df.empty or "Data" not in df.columns:
+            return
+
+        # Grab the encrypted blob from the first row, second column
         encrypted_blob = df.iloc[0, 1]
         decrypted_json = cipher.decrypt(encrypted_blob.encode()).decode()
         raw = json.loads(decrypted_json)
+        
         loaded_clients = {}
         for name, info in raw.items():
+            # Turn the JSON leads back into a usable DataFrame
             if isinstance(info.get('leads'), str):
                 info['leads'] = pd.read_json(info['leads'])
             loaded_clients[name] = info
+        
         st.session_state.clients = loaded_clients
-    except:
-        st.session_state.clients = {}
+    except Exception as e:
+        # Helpful for debugging: tells you if the key is wrong or sheet is empty
+        if "InvalidToken" in str(e):
+            st.error("Decryption Error: Is your master_key correct?")
+        else:
+            st.session_state.clients = {}
 
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input):
     """
