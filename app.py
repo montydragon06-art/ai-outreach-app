@@ -106,13 +106,15 @@ def send_email_logic(client_info, lead, groq_key):
         )
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
 
-        # Footer with Google Form Link
+        privacy_pdf_url = "https://docs.google.com/document/d/1OjaVW-V5VSXJ9k-mjncAj-xF4gHmVUQwVwrBlXTMxow/edit?usp=sharing" 
+
         footer = f"""
         <br><br>
         <hr style="border:none;border-top:1px solid #eee;" />
         <p style="font-size:10px;color:#888;">
-            Found via: {s_source} | <a href="{FORM_URL}">Unsubscribe</a>
-            <a href="{https://docs.google.com/document/d/1OjaVW-V5VSXJ9k-mjncAj-xF4gHmVUQwVwrBlXTMxow/edit?usp=sharing}">Privacy Policy (PDF)</a>
+            Found via: {s_source} | 
+            <a href="{form_url}">Unsubscribe</a> | 
+            <a href="{privacy_pdf_url}">Privacy Policy (PDF)</a>
         </p>
         """
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
