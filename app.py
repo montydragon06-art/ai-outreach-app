@@ -81,9 +81,9 @@ def load_data():
                 loaded_clients = {}
                 for name, info in raw.items():
                     if isinstance(info.get('leads'), str):
-                    # We use io.StringIO to make the string act like a file
-                    info['leads'] = pd.read_json(io.StringIO(info['leads']))
-                loaded_clients[name] = info
+                        # We use io.StringIO to make the string act like a file
+                        info['leads'] = pd.read_json(io.StringIO(info['leads']))
+                    loaded_clients[name] = info
                 
                 st.session_state.clients = loaded_clients
     except Exception as e:
