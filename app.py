@@ -64,33 +64,28 @@ def save_data():
         st.error(f"❌ Save Failed: {str(e)}")
 
 def load_data():
-    cipher = get_cipher()
     conn = get_conn()
-    if not cipher: return
     try:
-        # TTL=0 is the secret sauce. It prevents loading old/cached empty data.
-        df = conn.read(worksheet="Clients", ttl=0) 
+        df = conn.read(worksheet="Clients", ttl=0)
+        raw = {}
+        for _, row in df.iterrows():
+            raw[row['Name']] = decrypt_data(row['Data'])
         
-        if df is not None and not df.empty:
-            # Look for the row where Name is Master_Vault
-            vault_row = df[df["Name"] == "Master_Vault"]
-            if not vault_row.empty:
-                encrypted_blob = vault_row.iloc[0]["Data"]
-                decrypted_json = cipher.decrypt(encrypted_blob.encode()).decode()
-                raw = json.loads(decrypted_json)
+        loaded_clients = {}
+        for name, info in raw.items():
+            # FIX: Convert the JSON string into a DataFrame using io.StringIO
+            if isinstance(info.get('leads'), str):
+                info['leads'] = pd.read_json(io.StringIO(info['leads']))
+            
+            # Ensure send_log exists
+            if 'send_log' not in info:
+                info['send_log'] = []
                 
-                loaded_clients = {}
-                for name, info in raw.items():
-                    if isinstance(info.get('leads'), str):
-                        # We use io.StringIO to make the string act like a file
-                        info['leads'] = pd.read_json(io.StringIO(info['leads']))
-                    loaded_clients[name] = info
-                
-                st.session_state.clients = loaded_clients
+            loaded_clients[name] = info
+        return loaded_clients
     except Exception as e:
-        # Only reset if the error is serious; otherwise, keep session state
-        st.warning(f"Note: Could not refresh vault ({str(e)})")
-
+        st.error(f"Vault Error: {e}")
+        return {}
 def get_statistics():
     conn = get_conn()
     stats_data = []
@@ -127,80 +122,59 @@ def get_statistics():
 
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input):
     try:
-        # 1. Variables
+        # 1. Prepare Data
         s_name = str(lead.get('F_NAME', 'there')).strip()
-        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
         s_email = str(lead.get('F_EMAIL', '')).strip()
-        sender_business_name = client_info['name']
+        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
+        biz_name = client_info['name']
         
-        # 2. Build the Tracking Link
+        # 2. Build Tracking Link
         if send_type == 'link' and str(cta_input).startswith("http"):
             tracking_link = (
                 f"{TRACKER_URL}?"
                 f"dest={cta_input}&"
-                f"client={sender_business_name.replace(' ', '%20')}&"
+                f"client={biz_name.replace(' ', '%20')}&"
                 f"email={s_email}"
             )
-            # Instruct AI to wrap the link in a clear sentence
-            cta_context = f"You MUST include this exact URL as a clickable link: {tracking_link}"
+            # We provide a pre-made HTML link to the AI
+            cta_context = f"You MUST include this exact HTML hyperlink: <a href='{tracking_link}'>Click here to view details</a>"
         else:
-            cta_context = f"Tell them to reply directly to this email."
+            cta_context = "Tell them to simply reply to this email for more information."
 
-        # 3. AI Prompt (Optimized to prevent double names and missing links)
+        # 3. Secure AI Prompt
         groq_client = Groq(api_key=groq_key)
-        
         system_msg = (
-            f"You are writing a professional email for '{sender_business_name}' to an individual named '{s_name}'.\n"
+            f"You are a professional assistant for {biz_name}. Writing to an individual named {s_name}.\n"
             "STRICT RULES:\n"
-            "1. DO NOT include a greeting (No 'Dear', 'Hi', or 'Hello'). Start directly with the first paragraph.\n"
-            "2. DO NOT include a subject line or a sign-off (No 'Best regards' or name at the bottom).\n"
-            "3. HYPERLINK: If a URL is provided, you must present it clearly as a clickable link.\n"
-            "4. NO PLACEHOLDERS: Do not use [Name], [Your Name], or [Company].\n"
-            "5. The recipient is a person, not a business. Be personal and concise (max 2 paragraphs)."
+            "1. NO GREETING. Do not write 'Dear' or 'Hi'. Start directly with the message.\n"
+            "2. NO SIGN-OFF. Do not write 'Best regards' or your name. End with the last sentence.\n"
+            "3. NO PLACEHOLDERS. Do not use square brackets like [Name] or [Company].\n"
+            "4. USE HTML. If a link is provided in the instructions, use it exactly as formatted.\n"
+            "5. The recipient is a human person. Be concise (max 2 paragraphs)."
         )
         
-        user_msg = f"""
-        Sender: {sender_business_name}
-        Recipient: {s_name}
-        Context: {client_info['desc']}
-        Found via: {s_source}
-        Offer: {offer_input if offer_input else "None"}
-        Call to Action: {cta_context}
-        
-        Write the body of the email only.
-        """
+        user_msg = f"Description: {client_info['desc']}\nOffer: {offer_input}\nAction: {cta_context}"
 
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-            temperature=0.1
+            temperature=0.1 # Low temperature prevents hallucinations/lies
         )
         
-        # 4. Final Formatting
-        ai_body = completion.choices[0].message.content.strip()
-        
-        # Convert Markdown links to HTML if the AI used [text](url)
-        if "[" in ai_body and "](" in ai_body:
-            import re
-            ai_body = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', ai_body)
-        else:
-            # If AI just wrote the raw link, make it a clickable <a> tag
-            if "http" in ai_body and "<a href=" not in ai_body:
-                ai_body = ai_body.replace(tracking_link, f'<a href="{tracking_link}">{tracking_link}</a>')
+        ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
 
-        ai_body = ai_body.replace('\n', '<br>')
-
+        # 4. Final HTML Assembly
         footer = f"""<br><br><hr/><p style="font-size:10px;color:#888;">
             Found via: {s_source} | <a href="{FORM_URL}">Unsubscribe</a> | <a href="{PRIVACY_PDF_URL}">Privacy Policy</a></p>"""
         
-        # We handle the "Dear Name" here, so AI doesn't duplicate it
+        # We manually wrap the body to prevent double greetings
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
         # 5. SMTP Send
         msg = MIMEMultipart()
-        msg['From'] = f"{sender_business_name} <{client_info['email']}>"
+        msg['From'] = f"{biz_name} <{client_info['email']}>"
         msg['To'] = s_email
-        msg['Subject'] = f"Quick update from {sender_business_name}"
+        msg['Subject'] = f"Quick Update for {s_name}"
         msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
