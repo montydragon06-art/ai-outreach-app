@@ -127,58 +127,76 @@ def get_statistics():
 
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input):
     """
-    Enhanced Email Logic:
-    - send_type: 'link' or 'reply'
-    - cta_input: The link or the specific action required
-    - offer_input: Special offer (if provided)
+    Fixed & Secure Email Logic:
+    - Handles Click Tracking Redirects
+    - Lie-proof AI Prompting (No placeholders, no hallucinations)
+    - Strict length control
     """
-    if send_type == 'link' and cta_input.startswith("http"):
-            # This creates the link that logs the click before redirecting
+    try:
+        # 1. Prepare Lead & Client Variables
+        s_name = str(lead.get('F_NAME', 'there')).strip()
+        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
+        s_email = str(lead.get('F_EMAIL', '')).strip()
+        client_name = client_info['name']
+        
+        # 2. Build Tracking Link or Standard CTA
+        if send_type == 'link' and str(cta_input).startswith("http"):
+            # Format the tracking link for your Google Apps Script
             final_link = (
                 f"{TRACKER_URL}?"
                 f"dest={cta_input}&"
                 f"client={client_name.replace(' ', '%20')}&"
                 f"email={s_email}"
             )
-            cta_context = f"Include this EXACT tracking link as the Call to Action: {final_link}"
+            cta_context = f"Direct the user to click this exact tracking link: {final_link}"
         else:
-            cta_context = f"Requirement: {cta_input}. Ensure they know to reply directly to this email."
-    try:
-        s_name = str(lead.get('F_NAME', 'there')).strip()
-        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
-        s_email = lead.get('F_EMAIL')
-        
-        # Build AI context for offers
-        offer_context = f"Special Offer to include: {offer_input}" if offer_input else ""
-        
-        # Build CTA context
-        if send_type == 'link':
-            cta_context = f"Include this link as the Call to Action: '{str(cta_input)}'"
-        else:
-            cta_context = f"Requirement from user: {cta_input}. Ensure they know to reply directly to this email."
+            cta_context = f"Instruction: {cta_input}. Ensure the user knows to reply directly to this email."
 
+        # 3. AI Generation with strict safety guardrails
         groq_client = Groq(api_key=groq_key)
-        system_msg = "You are a professional assistant. Output ONLY the email body. No conversational filler."
+        
+        # Secure System Instructions
+        system_msg = (
+            "You are a professional business assistant. Your output must be ONLY the email body. "
+            "STRICT RULES:\n"
+            "1. NO placeholders like [Name], [Company], or [Date]. Use the exact data provided.\n"
+            "2. DO NOT invent facts, services, or details not found in the description.\n"
+            "3. DO NOT use conversational filler (e.g., 'Here is the email').\n"
+            "4. MAXIMUM 3 short paragraphs. Be concise."
+        )
+        
         user_msg = f"""
-        Write a concise outreach email to {s_name} regarding {client_info['desc']}. 
-        Mention source: {s_source}.
-        {offer_context}
-        {cta_context}
+        Business Name: {client_name}
+        Business Description: {client_info['desc']}
+        Lead Name: {s_name}
+        Source where we found them: {s_source}
+        Special Offer: {offer_input if offer_input else "None"}
+        Call to Action: {cta_context}
+        
+        Write a professional outreach email. Use only the provided info. 
+        If you don't know a fact, don't mention it. Ensure the link or reply instruction is clear.
         """
 
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-            temperature=0.4
+            messages=[
+                {"role": "system", "content": system_msg}, 
+                {"role": "user", "content": user_msg}
+            ],
+            temperature=0.2 # Lower temperature = less "creativity" / fewer lies
         )
+        
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
 
+        # 4. Final Assembly (Email + Footer)
         footer = f"""<br><br><hr/><p style="font-size:10px;color:#888;">
             Found via: {s_source} | <a href="{FORM_URL}">Unsubscribe</a> | <a href="{PRIVACY_PDF_URL}">Privacy Policy</a></p>"""
+        
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
+        # 5. SMTP Sending
         msg = MIMEMultipart()
-        msg['From'] = f"{client_info['name']} <{client_info['email']}>"
+        msg['From'] = f"{client_name} <{client_info['email']}>"
         msg['To'] = s_email
         msg['Subject'] = f"Quick Update for {s_name}"
         msg.attach(MIMEText(full_html, 'html'))
@@ -188,9 +206,11 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
         server.login(client_info['email'], client_info['app_pw'])
         server.send_message(msg)
         server.quit()
+        
         return True
+        
     except Exception as e: 
-        return str(e)
+        return f"Error: {str(e)}"
 
 # --- 3. SESSION INITIALIZATION ---
 if 'clients' not in st.session_state:
