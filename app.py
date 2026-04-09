@@ -127,75 +127,80 @@ def get_statistics():
 
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input):
     try:
-        # 1. Prepare Lead & Client Variables
+        # 1. Variables
         s_name = str(lead.get('F_NAME', 'there')).strip()
         s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
         s_email = str(lead.get('F_EMAIL', '')).strip()
-        sender_business_name = client_info['name'] # This is YOUR client
+        sender_business_name = client_info['name']
         
-        # 2. Build Tracking Link
+        # 2. Build the Tracking Link
         if send_type == 'link' and str(cta_input).startswith("http"):
-            final_link = (
+            tracking_link = (
                 f"{TRACKER_URL}?"
                 f"dest={cta_input}&"
                 f"client={sender_business_name.replace(' ', '%20')}&"
                 f"email={s_email}"
             )
-            cta_context = f"Direct the individual to click this link: {final_link}"
+            # Instruct AI to wrap the link in a clear sentence
+            cta_context = f"You MUST include this exact URL as a clickable link: {tracking_link}"
         else:
-            cta_context = f"Instruction: {cta_input}. Tell them to reply to this email."
+            cta_context = f"Tell them to reply directly to this email."
 
-        # 3. Secure & Precise AI Prompt
+        # 3. AI Prompt (Optimized to prevent double names and missing links)
         groq_client = Groq(api_key=groq_key)
         
         system_msg = (
-            f"You are writing an email on behalf of '{sender_business_name}'. "
-            f"You are writing TO an individual named '{s_name}'. "
+            f"You are writing a professional email for '{sender_business_name}' to an individual named '{s_name}'.\n"
             "STRICT RULES:\n"
-            "1. NEVER use placeholders like [Your Name], [Company], or [Insert].\n"
-            "2. DO NOT sign off with a name placeholder. End the email body with a professional closing phrase only.\n"
-            "3. The recipient is an INDIVIDUAL, not a company. Do not treat them as a business entity.\n"
-            "4. NO LIES. Use only the business description provided.\n"
-            "5. OUTPUT ONLY THE EMAIL BODY."
+            "1. DO NOT include a greeting (No 'Dear', 'Hi', or 'Hello'). Start directly with the first paragraph.\n"
+            "2. DO NOT include a subject line or a sign-off (No 'Best regards' or name at the bottom).\n"
+            "3. HYPERLINK: If a URL is provided, you must present it clearly as a clickable link.\n"
+            "4. NO PLACEHOLDERS: Do not use [Name], [Your Name], or [Company].\n"
+            "5. The recipient is a person, not a business. Be personal and concise (max 2 paragraphs)."
         )
         
         user_msg = f"""
-        SENDER (My Client): {sender_business_name}
-        SENDER'S BUSINESS DESCRIPTION: {client_info['desc']}
-        RECIPIENT (The Lead): {s_name}
-        WHERE WE FOUND THEM: {s_source}
-        OFFER: {offer_input if offer_input else "None"}
-        CALL TO ACTION: {cta_context}
+        Sender: {sender_business_name}
+        Recipient: {s_name}
+        Context: {client_info['desc']}
+        Found via: {s_source}
+        Offer: {offer_input if offer_input else "None"}
+        Call to Action: {cta_context}
         
-        Write a 2-paragraph outreach email to {s_name}. 
-        Make it clear that {sender_business_name} is reaching out to them personally.
+        Write the body of the email only.
         """
 
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": system_msg}, 
-                {"role": "user", "content": user_msg}
-            ],
-            temperature=0.1 # Minimum creativity to prevent hallucinations
+            messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
+            temperature=0.1
         )
         
+        # 4. Final Formatting
         ai_body = completion.choices[0].message.content.strip()
-        # Safety check: Remove any common AI placeholders if they slip through
-        ai_body = ai_body.replace("[Your Name]", "").replace("[Name]", "").replace("[Insert Name]", "")
+        
+        # Convert Markdown links to HTML if the AI used [text](url)
+        if "[" in ai_body and "](" in ai_body:
+            import re
+            ai_body = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', ai_body)
+        else:
+            # If AI just wrote the raw link, make it a clickable <a> tag
+            if "http" in ai_body and "<a href=" not in ai_body:
+                ai_body = ai_body.replace(tracking_link, f'<a href="{tracking_link}">{tracking_link}</a>')
+
         ai_body = ai_body.replace('\n', '<br>')
 
-        # 4. Assembly
         footer = f"""<br><br><hr/><p style="font-size:10px;color:#888;">
             Found via: {s_source} | <a href="{FORM_URL}">Unsubscribe</a> | <a href="{PRIVACY_PDF_URL}">Privacy Policy</a></p>"""
         
+        # We handle the "Dear Name" here, so AI doesn't duplicate it
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
-        # 5. SMTP
+        # 5. SMTP Send
         msg = MIMEMultipart()
         msg['From'] = f"{sender_business_name} <{client_info['email']}>"
         msg['To'] = s_email
-        msg['Subject'] = f"Message from {sender_business_name}"
+        msg['Subject'] = f"Quick update from {sender_business_name}"
         msg.attach(MIMEText(full_html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
