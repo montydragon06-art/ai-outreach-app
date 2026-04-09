@@ -245,6 +245,52 @@ elif page == "Client Vault":
                         st.rerun()
 
 elif page == "Email Logs":
-    for c_name, c_data in st.session_state.clients.items():
-        st.subheader(f"History for {c_name}")
-        st.dataframe(c_data.get('send_log', []), use_container_width=True)
+    st.header("📋 Communication History")
+    
+    if not st.session_state.clients:
+        st.info("No logs found. Create a client and send some emails first!")
+    else:
+        # 1. Create a list for the dropdown
+        client_names = list(st.session_state.clients.keys())
+        filter_options = ["All Clients"] + client_names
+        
+        # 2. Filter UI
+        selected_filter = st.selectbox("Filter logs by company:", filter_options)
+        
+        # 3. Logic to display the logs
+        if selected_filter == "All Clients":
+            all_logs = []
+            for c_name, c_data in st.session_state.clients.items():
+                # Add the company name to each row so we know who it belongs to
+                for entry in c_data.get('send_log', []):
+                    entry_with_company = entry.copy()
+                    entry_with_company["Company"] = c_name
+                    all_logs.append(entry_with_company)
+            
+            if all_logs:
+                log_df = pd.DataFrame(all_logs)
+                # Reorder columns to put Company first
+                cols = ["Company"] + [c for c in log_df.columns if c != "Company"]
+                st.dataframe(log_df[cols], use_container_width=True)
+                
+                # Download Button
+                csv = log_df.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download All Logs (CSV)", data=csv, file_name="all_email_logs.csv", mime="text/csv")
+            else:
+                st.warning("No emails have been sent yet.")
+        
+        else:
+            # Show logs for just the one selected client
+            c_data = st.session_state.clients[selected_filter]
+            specific_logs = c_data.get('send_log', [])
+            
+            if specific_logs:
+                log_df = pd.DataFrame(specific_logs)
+                st.subheader(f"History for {selected_filter}")
+                st.dataframe(log_df, use_container_width=True)
+                
+                # Download Button for specific client
+                csv = log_df.to_csv(index=False).encode('utf-8')
+                st.download_button(f"📥 Download {selected_filter} Logs", data=csv, file_name=f"{selected_filter}_logs.csv", mime="text/csv")
+            else:
+                st.info(f"No emails have been sent for {selected_filter} yet.")
