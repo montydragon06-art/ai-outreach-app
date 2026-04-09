@@ -89,6 +89,41 @@ def load_data():
     except Exception as e:
         # Only reset if the error is serious; otherwise, keep session state
         st.warning(f"Note: Could not refresh vault ({str(e)})")
+
+def get_statistics():
+    conn = get_conn()
+    stats_data = []
+    
+    try:
+        # 1. Load the Clicks sheet
+        clicks_df = conn.read(worksheet="Clicks", ttl=0)
+        
+        for c_name, c_data in st.session_state.clients.items():
+            # 2. Count Total Sent from this client's logs
+            sent_log = c_data.get('send_log', [])
+            total_sent = len([log for log in sent_log if log.get('Status') == "Success"])
+            
+            # 3. Count Clicks for this client from the Clicks sheet
+            if not clicks_df.empty and "Client" in clicks_df.columns:
+                client_clicks = len(clicks_df[clicks_df["Client"] == c_name])
+            else:
+                client_clicks = 0
+            
+            # 4. Calculate Percentage
+            percentage = (client_clicks / total_sent * 100) if total_sent > 0 else 0
+            
+            stats_data.append({
+                "Client Name": c_name,
+                "Emails Sent": total_sent,
+                "Total Clicks": client_clicks,
+                "Click Rate": f"{percentage:.1f}%"
+            })
+            
+        return pd.DataFrame(stats_data)
+    except Exception as e:
+        st.error(f"Error calculating stats: {e}")
+        return pd.DataFrame()
+
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input):
     """
     Enhanced Email Logic:
@@ -156,7 +191,7 @@ st.set_page_config(page_title="Agency Pro CRM", layout="wide")
 with st.sidebar:
     st.title("Command Center")
     st.session_state.g_key = st.text_input("GROQ API Key", type="password")
-    page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs"])
+    page = st.radio("Navigate", ["Create Client", "Client Vault", "Email Logs", "Statistics"])
 
 if page == "Create Client":
     st.header("Create New Client")
@@ -320,8 +355,44 @@ elif page == "Email Logs":
                 log_df = pd.DataFrame(specific_logs)
                 st.subheader(f"History for {selected_filter}")
                 st.dataframe(log_df, use_container_width=True)
+    
                 
                 csv = log_df.to_csv(index=False).encode('utf-8')
                 st.download_button(f"📥 Download {selected_filter} Logs", data=csv, file_name=f"{selected_filter}_logs.csv", mime="text/csv")
             else:
                 st.info(f"No emails have been sent for {selected_filter} yet.")
+elif page == "Statistics":
+    st.header("📊 Performance Statistics")
+    
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        # The Sync Button
+        if st.button("🔄 Sync from Sheets"):
+            st.cache_data.clear() # Clears Streamlit's memory to fetch fresh data
+            st.rerun()
+            
+    with col2:
+        st.info("Statistics are calculated by comparing Email Logs with the live Clicks sheet.")
+
+    if not st.session_state.clients:
+        st.warning("No clients found to generate statistics.")
+    else:
+        df_stats = get_statistics()
+        
+        if not df_stats.empty:
+            # Display as a clean table
+            st.dataframe(df_stats, use_container_width=True, hide_index=True)
+            
+            # Visual Metric Cards for the first client (or overall)
+            st.divider()
+            st.subheader("Quick Overview")
+            m_col1, m_col2, m_col3 = st.columns(3)
+            m_col1.metric("Total Sent (All)", df_stats["Emails Sent"].sum())
+            m_col2.metric("Total Clicks (All)", df_stats["Total Clicks"].sum())
+            
+            avg_rate = df_stats["Emails Sent"].sum()
+            total_clicks = df_stats["Total Clicks"].sum()
+            overall_rate = (total_clicks / avg_rate * 100) if avg_rate > 0 else 0
+            m_col3.metric("Average Click Rate", f"{overall_rate:.1f}%")
+        else:
+            st.write("No data available yet. Send some emails with tracking links first!")
