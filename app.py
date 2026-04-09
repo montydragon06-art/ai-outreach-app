@@ -104,7 +104,7 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
         
         # Build CTA context
         if send_type == 'link':
-            cta_context = f"Include this link as the Call to Action: {cta_input}"
+            cta_context = f"Include this link as the Call to Action: '{str(cta_input)}'"
         else:
             cta_context = f"Requirement from user: {cta_input}. Ensure they know to reply directly to this email."
 
