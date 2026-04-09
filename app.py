@@ -253,15 +253,30 @@ elif page == "Email Logs":
         # 1. Create a list for the dropdown
         client_names = list(st.session_state.clients.keys())
         filter_options = ["All Clients"] + client_names
-        
-        # 2. Filter UI
         selected_filter = st.selectbox("Filter logs by company:", filter_options)
         
-        # 3. Logic to display the logs
+        # --- CLEAR LOGS LOGIC ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Danger Zone")
+        
+        if selected_filter == "All Clients":
+            if st.sidebar.button("🗑️ Clear ALL Logs (Global)", help="This wipes history for EVERY client."):
+                for c_name in st.session_state.clients:
+                    st.session_state.clients[c_name]['send_log'] = []
+                save_data()
+                st.success("All logs cleared globally!")
+                st.rerun()
+        else:
+            if st.sidebar.button(f"🗑️ Clear {selected_filter} Logs", help=f"Only wipes logs for {selected_filter}"):
+                st.session_state.clients[selected_filter]['send_log'] = []
+                save_data()
+                st.success(f"Logs for {selected_filter} have been cleared.")
+                st.rerun()
+
+        # --- DISPLAY LOGIC ---
         if selected_filter == "All Clients":
             all_logs = []
             for c_name, c_data in st.session_state.clients.items():
-                # Add the company name to each row so we know who it belongs to
                 for entry in c_data.get('send_log', []):
                     entry_with_company = entry.copy()
                     entry_with_company["Company"] = c_name
@@ -269,18 +284,15 @@ elif page == "Email Logs":
             
             if all_logs:
                 log_df = pd.DataFrame(all_logs)
-                # Reorder columns to put Company first
                 cols = ["Company"] + [c for c in log_df.columns if c != "Company"]
                 st.dataframe(log_df[cols], use_container_width=True)
                 
-                # Download Button
                 csv = log_df.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download All Logs (CSV)", data=csv, file_name="all_email_logs.csv", mime="text/csv")
             else:
-                st.warning("No emails have been sent yet.")
+                st.warning("No logs found for any clients.")
         
         else:
-            # Show logs for just the one selected client
             c_data = st.session_state.clients[selected_filter]
             specific_logs = c_data.get('send_log', [])
             
@@ -289,7 +301,6 @@ elif page == "Email Logs":
                 st.subheader(f"History for {selected_filter}")
                 st.dataframe(log_df, use_container_width=True)
                 
-                # Download Button for specific client
                 csv = log_df.to_csv(index=False).encode('utf-8')
                 st.download_button(f"📥 Download {selected_filter} Logs", data=csv, file_name=f"{selected_filter}_logs.csv", mime="text/csv")
             else:
