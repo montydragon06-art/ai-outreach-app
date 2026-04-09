@@ -107,7 +107,9 @@ def send_email_logic(client_info, lead, groq_key):
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
 
         privacy_pdf_url = "https://docs.google.com/document/d/1OjaVW-V5VSXJ9k-mjncAj-xF4gHmVUQwVwrBlXTMxow/edit?usp=sharing" 
+        form_url = "https://docs.google.com/forms/d/e/1FAIpQLScBMsqCrO8tKVW4nYLUOVgAewzqUdrom-VXPPPrhsgxPY0rzg/viewform"
 
+        
         footer = f"""
         <br><br>
         <hr style="border:none;border-top:1px solid #eee;" />
