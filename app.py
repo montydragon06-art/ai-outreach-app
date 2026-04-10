@@ -242,7 +242,7 @@ elif page == "Client Vault":
                 with col_a:
                     start_date = st.date_input("Start Date", key=f"date_{c_name}")
                     start_time = st.time_input("Start Time", key=f"time_{c_name}")
-                    freq = st.selectbox("Frequency", ["Every 24 hours", "Every 48 hours", "Weekly"], key=f"freq_{c_name}")
+                    freq_days = st.number_input("Repeat every (days):", min_value=1, value=1, step=1, key=f"freq_{c_name}")
                 with col_b:
                     # NEW: Tone Selection for Automation
                     a_tone = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"atone_{c_name}")
@@ -252,17 +252,18 @@ elif page == "Client Vault":
                 a_offer = st.text_input("Offer (Optional)", key=f"ao_{c_name}")
                 
                 if st.button("Enable Automation", key=f"ba_{c_name}"):
-                    next_run = datetime.combine(start_date, start_time)
-                    c_data['auto_settings'] = {
-                        "active": True, 
-                        "next_run": next_run.strftime("%Y-%m-%d %H:%M"), 
-                        "freq": freq, 
-                        "cta": a_cta, 
-                        "offer": a_offer, 
-                        "method": a_method,
-                        "tone": a_tone  # Saved to settings
-                    }
-                    save_data(); st.success(f"Scheduled for {next_run} with {a_tone} tone.")
+    next_run = datetime.combine(start_date, start_time)
+    c_data['auto_settings'] = {
+        "active": True, 
+        "next_run": next_run.strftime("%Y-%m-%d %H:%M"), 
+        "freq_days": freq_days,  # Store the raw number of days
+        "cta": a_cta, 
+        "offer": a_offer, 
+        "method": a_method,
+        "tone": a_tone
+    }
+    save_data()
+    st.success(f"Scheduled for {next_run} (Repeating every {freq_days} day(s))")
                 
                 if c_data.get('auto_settings', {}).get('active'):
                     st.info(f"📍 Next Run: {c_data['auto_settings']['next_run']} | Tone: {c_data['auto_settings'].get('tone')}")
