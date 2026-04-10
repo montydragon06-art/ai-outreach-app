@@ -107,38 +107,71 @@ def get_statistics():
 
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input):
     try:
+        # 1. Prepare Data
         s_name = str(lead.get('F_NAME', 'there')).strip()
         s_email = str(lead.get('F_EMAIL', '')).strip()
         s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
         biz_name = client_info['name']
         
+        # 2. Build Tracking Link Context
         if send_type == 'link' and str(cta_input).startswith("http"):
-            tracking_link = f"{TRACKER_URL}?dest={cta_input}&client={biz_name.replace(' ', '%20')}&email={s_email}"
-            cta_context = f"Include this HTML hyperlink: <a href='{tracking_link}'>Click here to view details</a>"
+            tracking_link = (
+                f"{TRACKER_URL}?"
+                f"dest={cta_input}&"
+                f"client={biz_name.replace(' ', '%20')}&"
+                f"email={s_email}"
+            )
+            # Instructing the AI to place this at the very end
+            cta_context = f"At the very end of your message, include this exact HTML hyperlink: <a href='{tracking_link}'>Click here to view details</a>"
         else:
-            cta_context = f"Requirement: {cta_input}. Tell them to reply directly to this email."
+            cta_context = "End the message by telling them to simply reply to this email for more information."
 
+        # 3. Secure AI Prompt
         groq_client = Groq(api_key=groq_key)
-        system_msg = (f"You are a professional assistant for {biz_name}. Writing to {s_name}.\n"
-                      "STRICT RULES: No greetings, no sign-offs, no placeholders. Use HTML for links.")
-        user_msg = f"Description: {client_info['desc']}\nOffer: {offer_input}\nAction: {cta_context}"
+        system_msg = (
+            f"You are a professional assistant for {biz_name}. Writing to {s_name}.\n"
+            "STRICT RULES:\n"
+            "1. NO GREETING. Do not write 'Dear' or 'Hi'. Start directly with the first sentence of the body.\n"
+            "2. NO SIGN-OFF. Do not write 'Best regards' or a name. The script handles the signature.\n"
+            "3. NO PLACEHOLDERS. Do not use square brackets like [Name] or [Company].\n"
+            "4. HYPERLINK PLACEMENT. If a link is provided, it MUST be the very last thing in your response.\n"
+            "5. LENGTH. Be concise (max 2 paragraphs)."
+        )
+        
+        user_msg = f"Business Description: {client_info['desc']}\nSpecial Offer: {offer_input}\nRequired Action: {cta_context}"
 
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
             temperature=0.1
         )
+        
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
-        footer = f"<br><br><hr/><p style='font-size:10px;color:#888;'>Found via: {s_source} | <a href='{FORM_URL}'>Unsubscribe</a> | <a href='{PRIVACY_PDF_URL}'>Privacy Policy</a></p>"
+
+        # 4. Final HTML Assembly
+        # This fixes the double greeting by being the ONLY place "Dear" is defined.
+        # It adds a professional sign-off using the business name from client_info.
+        footer = f"""<br><br>Best regards,<br>{biz_name}<br><br><hr/><p style="font-size:10px;color:#888;">
+            Found via: {s_source} | <a href="{FORM_URL}">Unsubscribe</a> | <a href="{PRIVACY_PDF_URL}">Privacy Policy</a></p>"""
+        
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
-        msg = MIMEMultipart(); msg['From'] = f"{biz_name} <{client_info['email']}>"; msg['To'] = s_email; msg['Subject'] = f"Quick Update for {s_name}"
+        # 5. SMTP Send
+        msg = MIMEMultipart()
+        msg['From'] = f"{biz_name} <{client_info['email']}>"
+        msg['To'] = s_email
+        msg['Subject'] = f"Quick Update for {s_name}"
         msg.attach(MIMEText(full_html, 'html'))
         
-        server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls(); server.login(client_info['email'], client_info['app_pw']); server.send_message(msg); server.quit()
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(client_info['email'], client_info['app_pw'])
+        server.send_message(msg)
+        server.quit()
         return True
-    except Exception as e: return str(e)
-
+        
+    except Exception as e: 
+        return str(e)
 # --- 3. SESSION INITIALIZATION ---
 if 'clients' not in st.session_state:
     st.session_state.clients = load_data()
