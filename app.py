@@ -105,15 +105,16 @@ def get_statistics():
         st.error(f"Error calculating stats: {e}")
         return pd.DataFrame()
 
-def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input):
+def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input, tone="professional"):
     try:
-        # 1. Prepare Data
+        # 1. Prepare Lead and Client Data
         s_name = str(lead.get('F_NAME', 'there')).strip()
         s_email = str(lead.get('F_EMAIL', '')).strip()
         s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
         biz_name = client_info['name']
         
-        # 2. Build Tracking Link Context
+        # 2. Build the Call to Action (CTA) Context
+        # This ensures the link is generated correctly but the AI decides where the text ends
         if send_type == 'link' and str(cta_input).startswith("http"):
             tracking_link = (
                 f"{TRACKER_URL}?"
@@ -121,42 +122,48 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
                 f"client={biz_name.replace(' ', '%20')}&"
                 f"email={s_email}"
             )
-            # Instructing the AI to place this at the very end
             cta_context = f"At the very end of your message, include this exact HTML hyperlink: <a href='{tracking_link}'>Click here to view details</a>"
         else:
             cta_context = "End the message by telling them to simply reply to this email for more information."
 
-        # 3. Secure AI Prompt
+        # 3. Initialize AI with Strict Formatting Rules
         groq_client = Groq(api_key=groq_key)
+        
+        # The System Prompt is where we control the "double greeting" and "tone" issues
         system_msg = (
             f"You are a professional assistant for {biz_name}. Writing to {s_name}.\n"
+            f"TONE: The email MUST sound {tone}.\n"
             "STRICT RULES:\n"
-            "1. NO GREETING. Do not write 'Dear' or 'Hi'. Start directly with the first sentence of the body.\n"
-            "2. NO SIGN-OFF. Do not write 'Best regards' or a name. The script handles the signature.\n"
+            "1. NO GREETING. Do not write 'Dear' or 'Hi'. Start directly with the body text.\n"
+            "2. NO SIGN-OFF. Do not write 'Best regards' or your name. The script handles this.\n"
             "3. NO PLACEHOLDERS. Do not use square brackets like [Name] or [Company].\n"
-            "4. HYPERLINK PLACEMENT. If a link is provided, it MUST be the very last thing in your response.\n"
-            "5. LENGTH. Be concise (max 2 paragraphs)."
+            "4. HYPERLINK PLACEMENT. If a link is requested, it MUST be the absolute last thing you write.\n"
+            "5. CONCISENESS. Keep the email under 2 short paragraphs."
         )
         
         user_msg = f"Business Description: {client_info['desc']}\nSpecial Offer: {offer_input}\nRequired Action: {cta_context}"
 
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-            temperature=0.1
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg}
+            ],
+            temperature=0.3  # Set to 0.3 to allow the "Tone" to actually manifest without being too wild
         )
         
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
 
         # 4. Final HTML Assembly
-        # This fixes the double greeting by being the ONLY place "Dear" is defined.
-        # It adds a professional sign-off using the business name from client_info.
-        footer = f"""<br><br>Best regards,<br>{biz_name}<br><br><hr/><p style="font-size:10px;color:#888;">
-            Found via: {s_source} | <a href="{FORM_URL}">Unsubscribe</a> | <a href="{PRIVACY_PDF_URL}">Privacy Policy</a></p>"""
+        # We wrap the AI body with the single greeting and the professional footer
+        footer = f"""<br><br>Best regards,<br>{biz_name}<br><br><hr/>
+            <p style="font-size:10px;color:#888;">
+            Found via: {s_source} | <a href="{FORM_URL}">Unsubscribe</a> | <a href="{PRIVACY_PDF_URL}">Privacy Policy</a>
+            </p>"""
         
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
-        # 5. SMTP Send
+        # 5. Email Dispatch Logic
         msg = MIMEMultipart()
         msg['From'] = f"{biz_name} <{client_info['email']}>"
         msg['To'] = s_email
@@ -168,10 +175,12 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
         server.login(client_info['email'], client_info['app_pw'])
         server.send_message(msg)
         server.quit()
+        
         return True
         
     except Exception as e: 
         return str(e)
+        
 # --- 3. SESSION INITIALIZATION ---
 if 'clients' not in st.session_state:
     st.session_state.clients = load_data()
@@ -201,50 +210,86 @@ if page == "Create Client":
                 save_data(); st.success("Client Saved!"); st.rerun()
 
 elif page == "Client Vault":
-    if not st.session_state.clients: st.info("No clients found.")
+    if not st.session_state.clients: 
+        st.info("No clients found.")
+    
     for c_name in list(st.session_state.clients.keys()):
         c_data = st.session_state.clients[c_name]
+        
         with st.expander(f"🏢 {c_name}"):
-            tab_info, tab_auto, tab_manual = st.tabs(["Information", "Automatic Send", "Manual Send"])
+            tab_info, tab_auto, tab_manual = st.tabs(["Edit Account", "Automation", "Manual Batch"])
+            
+            # --- TAB 1: EDIT ACCOUNT (As built previously) ---
             with tab_info:
-                c_data['name'] = st.text_input("Name", value=c_data['name'], key=f"en_{c_name}")
-                c_data['desc'] = st.text_area("Desc", value=c_data['desc'], key=f"ed_{c_name}")
-                if st.button("Save Changes", key=f"sv_{c_name}"): save_data()
-            with tab_auto:
-                st.subheader("Schedule Campaigns")
+                new_name = st.text_input("Business Name", value=c_data.get('name', c_name), key=f"edit_nm_{c_name}")
+                new_email = st.text_input("Sender Email", value=c_data.get('email', ''), key=f"edit_em_{c_name}")
+                new_pw = st.text_input("App Password", value=c_data.get('app_pw', ''), type="password", key=f"edit_pw_{c_name}")
+                new_desc = st.text_area("Description", value=c_data.get('desc', ''), key=f"edit_ds_{c_name}")
                 col1, col2 = st.columns(2)
                 with col1:
+                    if st.button("💾 Update Client", key=f"save_{c_name}"):
+                        st.session_state.clients[c_name].update({"name": new_name, "email": new_email, "app_pw": new_pw, "desc": new_desc})
+                        save_data(); st.rerun()
+                with col2:
+                    if st.button("🗑️ Delete Client", key=f"del_{c_name}", type="primary"):
+                        del st.session_state.clients[c_name]
+                        save_data(); st.rerun()
+
+            # --- TAB 2: AUTOMATIC SEND (With Tone Selection) ---
+            with tab_auto:
+                st.subheader("Schedule Campaigns")
+                col_a, col_b = st.columns(2)
+                with col_a:
                     start_date = st.date_input("Start Date", key=f"date_{c_name}")
                     start_time = st.time_input("Start Time", key=f"time_{c_name}")
-                with col2:
                     freq = st.selectbox("Frequency", ["Every 24 hours", "Every 48 hours", "Weekly"], key=f"freq_{c_name}")
+                with col_b:
+                    # NEW: Tone Selection for Automation
+                    a_tone = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"atone_{c_name}")
+                    a_method = st.radio("CTA Type", ["Link to click", "Direct reply"], key=f"am_{c_name}")
                 
-                send_method = st.radio("CTA Type", ["Link to click", "Direct reply"], key=f"am_{c_name}")
-                cta_val = st.text_input("CTA Link/Action", key=f"ac_{c_name}")
-                offer_val = st.text_input("Offer", key=f"ao_{c_name}")
+                a_cta = st.text_input("CTA Link/Action", key=f"ac_{c_name}")
+                a_offer = st.text_input("Offer (Optional)", key=f"ao_{c_name}")
                 
                 if st.button("Enable Automation", key=f"ba_{c_name}"):
                     next_run = datetime.combine(start_date, start_time)
-                    c_data['auto_settings'] = {"active": True, "next_run": next_run.strftime("%Y-%m-%d %H:%M"), "freq": freq, "cta": cta_val, "offer": offer_val, "method": send_method}
-                    save_data(); st.success(f"Scheduled for {next_run}")
+                    c_data['auto_settings'] = {
+                        "active": True, 
+                        "next_run": next_run.strftime("%Y-%m-%d %H:%M"), 
+                        "freq": freq, 
+                        "cta": a_cta, 
+                        "offer": a_offer, 
+                        "method": a_method,
+                        "tone": a_tone  # Saved to settings
+                    }
+                    save_data(); st.success(f"Scheduled for {next_run} with {a_tone} tone.")
+                
                 if c_data.get('auto_settings', {}).get('active'):
-                    st.info(f"📍 Next Run: {c_data['auto_settings']['next_run']}")
+                    st.info(f"📍 Next Run: {c_data['auto_settings']['next_run']} | Tone: {c_data['auto_settings'].get('tone')}")
 
+            # --- TAB 3: MANUAL SEND (With Tone Selection) ---
             with tab_manual:
-                m_method = st.radio("Type", ["Link to click", "Action Required"], key=f"mm_{c_name}")
-                m_cta = st.text_input("CTA", key=f"mc_{c_name}")
-                m_offer = st.text_input("Offer", key=f"mo_{c_name}")
+                st.subheader("Execute One-Time Batch")
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    m_method = st.radio("Type", ["Link to click", "Action Required"], key=f"mm_{c_name}")
+                    m_tone = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"mtone_{c_name}")
+                with col_m2:
+                    m_cta = st.text_input("CTA (Link or Action)", key=f"mc_{c_name}")
+                    m_offer = st.text_input("Offer (Optional)", key=f"mo_{c_name}")
+                
                 if st.button("🚀 Execute Batch", key=f"ex_{c_name}"):
-                    if not st.session_state.get('g_key'): st.error("Enter GROQ Key!")
+                    if not st.session_state.get('g_key'): 
+                        st.error("Enter GROQ Key in sidebar!")
                     else:
                         progress = st.progress(0); leads = c_data['leads']
                         for i, (_, lead) in enumerate(leads.iterrows()):
                             l_email = lead.get('F_EMAIL')
-                            status = "Skipped" if check_blacklist(l_email) else ("Success" if send_email_logic(c_data, lead, st.session_state.g_key, 'link' if m_method == "Link to click" else 'reply', m_cta, m_offer) == True else "Failed")
+                            # Pass the tone to the logic function
+                            status = "Skipped" if check_blacklist(l_email) else ("Success" if send_email_logic(c_data, lead, st.session_state.g_key, 'link' if m_method == "Link to click" else 'reply', m_cta, m_offer, m_tone) == True else "Failed")
                             c_data['send_log'].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Lead": l_email, "Status": status})
                             progress.progress((i + 1) / len(leads))
-                        save_data(); st.rerun()
-
+                        save_data(); st.success("Batch Complete!"); st.rerun()
 elif page == "Email Logs":
     st.header("📋 History")
     client_names = list(st.session_state.clients.keys())
