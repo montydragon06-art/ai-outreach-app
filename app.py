@@ -302,21 +302,86 @@ elif page == "Client Vault":
                 
                 if c_data.get('auto_settings', {}).get('active'):
                     st.info(f"📍 Next Run: {c_data['auto_settings']['next_run']} | Tone: {c_data['auto_settings'].get('tone')}")
-
             with tab_manual:
-                m_method = st.radio("Type", ["Link to click", "Action Required"], key=f"mm_{c_name}")
-                m_tone = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"mtone_{c_name}")
-                m_cta = st.text_input("CTA", key=f"mc_{c_name}"); m_offer = st.text_input("Offer", key=f"mo_{c_name}")
-                if st.button("🚀 Execute Batch", key=f"ex_{c_name}"):
-                    if not st.session_state.get('g_key'): st.error("Enter GROQ Key!")
-                    else:
-                        progress = st.progress(0); leads = c_data['leads']
-                        for i, (_, lead) in enumerate(leads.iterrows()):
-                            status = "Success" if send_email_logic(c_data, lead, st.session_state.g_key, 'link' if m_method == "Link to click" else 'reply', m_cta, m_offer, m_tone) == True else "Failed"
-                            c_data['send_log'].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Lead": lead.get('F_EMAIL'), "Status": status})
-                            progress.progress((i + 1) / len(leads))
-                        save_data(); st.rerun()
+                st.subheader("🚀 Execute One-Time Batch")
+                st.markdown("---")
+    
+                # Selection Area
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    m_method = st.radio(
+                        "1. How should they respond?", 
+                        ["Link to click", "Direct reply to email"], 
+                        key=f"mm_{c_name}",
+                        help="Choose 'Link' to include a tracking URL, or 'Direct reply' to encourage a conversation."
+                    )
+                with col_m2:
+                    m_tone = st.selectbox(
+                        "2. Choose the Email Tone", 
+                        ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], 
+                        key=f"mtone_{c_name}"
+                    )
 
+                st.markdown("---")
+    
+                # Message Content Area
+                st.write("### 3. Customize the Message Content")
+    
+                m_offer = st.text_area(
+                    "The Special Offer", 
+                    placeholder="e.g., A 20% discount code for first-time buyers or a free 15-minute consultation.",
+                    key=f"mo_{c_name}",
+                    help="What value are you providing in this email?"
+                )
+    
+                if m_method == "Link to click":
+                    m_cta = st.text_input(
+                        "Destination URL (Link)", 
+                        placeholder="https://yourwebsite.com/landing-page",
+                        key=f"mc_{c_name}",
+                        help="The AI will turn this into a tracking link at the end of the email."
+                    )
+                else:
+                    m_cta = st.text_input(
+                        "Call to Action (Reply Instruction)", 
+                        placeholder="e.g., Let me know if you're interested in a quick chat.",
+                        key=f"mc_{c_name}",
+                        help="Tell the lead exactly what they should reply with."
+                    )
+
+                st.write("")
+                if st.button("🚀 Execute Batch Now", key=f"ex_{c_name}", use_container_width=True):
+                    if not st.session_state.get('g_key'): 
+                        st.error("⚠️ Enter your GROQ Key in the sidebar first!")
+                    elif m_method == "Link to click" and not m_cta.startswith("http"):
+                        st.error("⚠️ Please enter a valid URL starting with http:// or https://")
+                    else:
+                        progress = st.progress(0)
+                        leads = c_data['leads']
+                        for i, (_, lead) in enumerate(leads.iterrows()):
+                            l_email = lead.get('F_EMAIL')
+                            # Check blacklist
+                            if check_blacklist(l_email):
+                                status = "Skipped"
+                            else:
+                                # Execute logic
+                                res = send_email_logic(
+                                    c_data, lead, st.session_state.g_key, 
+                                    'link' if m_method == "Link to click" else 'reply', 
+                                    m_cta, m_offer, m_tone
+                                )
+                                status = "Success" if res == True else "Failed"
+                
+                            c_data['send_log'].append({
+                                "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                                "Lead": l_email, 
+                                "Status": status
+                            })
+                            progress.progress((i + 1) / len(leads))
+            
+                        save_data()
+                        st.success(f"✅ Batch Complete! {len(leads)} leads processed.")
+                        st.rerun()
 elif page == "Email Logs":
     st.header("📋 History")
     all_logs = []
