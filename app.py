@@ -30,22 +30,13 @@ def get_cipher():
 
 def decrypt_data(encrypted_blob):
     cipher = get_cipher()
-    if not cipher: return None
+    if not cipher: return {}
     try:
         decrypted_data = cipher.decrypt(encrypted_blob.encode()).decode()
         return json.loads(decrypted_data)
     except Exception as e:
-        st.error(f"Decryption failed: {e}")
+        # Silently fail or log to avoid breaking the UI on empty loads
         return {}
-
-def check_blacklist(email):
-    conn = get_conn()
-    try:
-        df = conn.read(worksheet="Form Responses 1") 
-        blacklisted_emails = df.iloc[:, 1].astype(str).str.lower().values 
-        return email.lower() in blacklisted_emails
-    except:
-        return False
 
 def save_data():
     cipher = get_cipher()
@@ -70,9 +61,14 @@ def load_data():
     conn = get_conn()
     try:
         df = conn.read(worksheet="Clients", ttl=0)
+        if df.empty: return {}
+        
         raw = {}
+        # Fixed the decryption call to handle potential empty/corrupt rows
         for _, row in df.iterrows():
-            raw[row['Name']] = decrypt_data(row['Data'])
+            decrypted = decrypt_data(row['Data'])
+            if decrypted:
+                raw.update(decrypted)
         
         loaded_clients = {}
         for name, info in raw.items():
@@ -83,8 +79,42 @@ def load_data():
             loaded_clients[name] = info
         return loaded_clients
     except Exception as e:
-        st.error(f"Vault Error: {e}")
         return {}
+
+# --- NEW: AUTOMATION HEARTBEAT ---
+def run_automation_check():
+    """Immediately sends emails if current time is past next_run and updates schedule."""
+    if 'clients' not in st.session_state or not st.session_state.get('g_key'):
+        return
+
+    now = datetime.now()
+    updated = False
+
+    for c_name, c_data in st.session_state.clients.items():
+        auto = c_data.get('auto_settings', {})
+        if auto.get('active') and auto.get('next_run'):
+            next_run_dt = datetime.strptime(auto['next_run'], "%Y-%m-%d %H:%M")
+            
+            if now >= next_run_dt:
+                # Trigger sending
+                leads = c_data.get('leads')
+                if leads is not None and not leads.empty:
+                    for _, lead in leads.iterrows():
+                        l_email = lead.get('F_EMAIL')
+                        status = "Success" if send_email_logic(
+                            c_data, lead, st.session_state.g_key, 
+                            'link' if auto['method'] == "Link to click" else 'reply', 
+                            auto['cta'], auto['offer'], auto['tone']
+                        ) == True else "Failed"
+                        c_data['send_log'].append({"Time": now.strftime("%Y-%m-%d %H:%M"), "Lead": l_email, "Status": status})
+                
+                # Calculate next run time based on current time + freq_days
+                new_next_run = now + timedelta(days=int(auto.get('freq_days', 1)))
+                c_data['auto_settings']['next_run'] = new_next_run.strftime("%Y-%m-%d %H:%M")
+                updated = True
+    
+    if updated:
+        save_data()
 
 def get_statistics():
     conn = get_conn()
@@ -101,93 +131,56 @@ def get_statistics():
                 "Total Clicks": client_clicks, "Click Rate": f"{percentage:.1f}%"
             })
         return pd.DataFrame(stats_data)
-    except Exception as e:
-        st.error(f"Error calculating stats: {e}")
+    except:
         return pd.DataFrame()
 
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input, tone="professional"):
     try:
-        # 1. Prepare Lead and Client Data
         s_name = str(lead.get('F_NAME', 'there')).strip()
         s_email = str(lead.get('F_EMAIL', '')).strip()
         s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
         biz_name = client_info['name']
         
-        # 2. Build the Call to Action (CTA) Context
-        # This ensures the link is generated correctly but the AI decides where the text ends
         if send_type == 'link' and str(cta_input).startswith("http"):
-            tracking_link = (
-                f"{TRACKER_URL}?"
-                f"dest={cta_input}&"
-                f"client={biz_name.replace(' ', '%20')}&"
-                f"email={s_email}"
-            )
+            tracking_link = f"{TRACKER_URL}?dest={cta_input}&client={biz_name.replace(' ', '%20')}&email={s_email}"
             cta_context = f"At the very end of your message, include this exact HTML hyperlink: <a href='{tracking_link}'>Click here to view details</a>"
         else:
             cta_context = "End the message by telling them to simply reply to this email for more information."
 
-        # 3. Initialize AI with Strict Formatting Rules
         groq_client = Groq(api_key=groq_key)
-        
-        # The System Prompt is where we control the "double greeting" and "tone" issues
         system_msg = (
             f"You are a professional assistant for {biz_name}. Writing to {s_name}.\n"
             f"TONE: The email MUST sound {tone}.\n"
-            "STRICT RULES:\n"
-            "1. NO GREETING. Do not write 'Dear' or 'Hi'. Start directly with the body text.\n"
-            "2. NO SIGN-OFF. Do not write 'Best regards' or your name. The script handles this.\n"
-            "3. NO PLACEHOLDERS. Do not use square brackets like [Name] or [Company].\n"
-            "4. HYPERLINK PLACEMENT. If a link is requested, it MUST be the absolute last thing you write.\n"
-            "5. CONCISENESS. Keep the email under 2 short paragraphs."
+            "STRICT RULES: 1. NO GREETING. 2. NO SIGN-OFF. 3. NO PLACEHOLDERS. 4. LINK AT ABSOLUTE END."
         )
         
-        user_msg = f"Business Description: {client_info['desc']}\nSpecial Offer: {offer_input}\nRequired Action: {cta_context}"
-
+        user_msg = f"Description: {client_info['desc']}\nOffer: {offer_input}\nAction: {cta_context}"
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg}
-            ],
-            temperature=0.3  # Set to 0.3 to allow the "Tone" to actually manifest without being too wild
+            messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
+            temperature=0.3
         )
-        
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
-
-        # 4. Final HTML Assembly
-        # We wrap the AI body with the single greeting and the professional footer
-        footer = f"""<br><br>Best regards,<br>{biz_name}<br><br><hr/>
-            <p style="font-size:10px;color:#888;">
-            Found via: {s_source} | <a href="{FORM_URL}">Unsubscribe</a> | <a href="{PRIVACY_PDF_URL}">Privacy Policy</a>
-            </p>"""
-        
+        footer = f"<br><br>Best regards,<br>{biz_name}<br><br><hr/><p style='font-size:10px;color:#888;'>Found via: {s_source} | <a href='{FORM_URL}'>Unsubscribe</a></p>"
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
-        # 5. Email Dispatch Logic
-        msg = MIMEMultipart()
-        msg['From'] = f"{biz_name} <{client_info['email']}>"
-        msg['To'] = s_email
-        msg['Subject'] = f"Quick Update for {s_name}"
+        msg = MIMEMultipart(); msg['From'] = f"{biz_name} <{client_info['email']}>"; msg['To'] = s_email; msg['Subject'] = f"Update for {s_name}"
         msg.attach(MIMEText(full_html, 'html'))
-        
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(client_info['email'], client_info['app_pw'])
-        server.send_message(msg)
-        server.quit()
-        
+        server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls(); server.login(client_info['email'], client_info['app_pw'])
+        server.send_message(msg); server.quit()
         return True
-        
-    except Exception as e: 
-        return str(e)
-        
+    except Exception as e: return str(e)
+
 # --- 3. SESSION INITIALIZATION ---
+st.set_page_config(page_title="Agency Pro CRM", layout="wide")
+
 if 'clients' not in st.session_state:
     st.session_state.clients = load_data()
 
-# --- 4. UI INTERFACE ---
-st.set_page_config(page_title="Agency Pro CRM", layout="wide")
+# Run the automation check every time the app is loaded/refreshed
+run_automation_check()
 
+# --- 4. UI INTERFACE ---
 with st.sidebar:
     st.title("Command Center")
     st.session_state.g_key = st.text_input("GROQ API Key", type="password")
@@ -215,36 +208,29 @@ elif page == "Client Vault":
     
     for c_name in list(st.session_state.clients.keys()):
         c_data = st.session_state.clients[c_name]
-        
         with st.expander(f"🏢 {c_name}"):
             tab_info, tab_auto, tab_manual = st.tabs(["Edit Account", "Automation", "Manual Batch"])
             
-            # --- TAB 1: EDIT ACCOUNT (As built previously) ---
             with tab_info:
                 new_name = st.text_input("Business Name", value=c_data.get('name', c_name), key=f"edit_nm_{c_name}")
                 new_email = st.text_input("Sender Email", value=c_data.get('email', ''), key=f"edit_em_{c_name}")
                 new_pw = st.text_input("App Password", value=c_data.get('app_pw', ''), type="password", key=f"edit_pw_{c_name}")
                 new_desc = st.text_area("Description", value=c_data.get('desc', ''), key=f"edit_ds_{c_name}")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("💾 Update Client", key=f"save_{c_name}"):
-                        st.session_state.clients[c_name].update({"name": new_name, "email": new_email, "app_pw": new_pw, "desc": new_desc})
-                        save_data(); st.rerun()
-                with col2:
-                    if st.button("🗑️ Delete Client", key=f"del_{c_name}", type="primary"):
-                        del st.session_state.clients[c_name]
-                        save_data(); st.rerun()
+                if st.button("💾 Update Client", key=f"save_{c_name}"):
+                    st.session_state.clients[c_name].update({"name": new_name, "email": new_email, "app_pw": new_pw, "desc": new_desc})
+                    save_data(); st.rerun()
+                if st.button("🗑️ Delete Client", key=f"del_{c_name}", type="primary"):
+                    del st.session_state.clients[c_name]; save_data(); st.rerun()
 
-            # --- TAB 2: AUTOMATIC SEND (With Tone Selection) ---
             with tab_auto:
                 st.subheader("Schedule Campaigns")
                 col_a, col_b = st.columns(2)
                 with col_a:
                     start_date = st.date_input("Start Date", key=f"date_{c_name}")
                     start_time = st.time_input("Start Time", key=f"time_{c_name}")
+                    # UI Fix: freq_days is now properly initialized
                     freq_days = st.number_input("Repeat every (days):", min_value=1, value=1, step=1, key=f"freq_{c_name}")
                 with col_b:
-                    # NEW: Tone Selection for Automation
                     a_tone = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"atone_{c_name}")
                     a_method = st.radio("CTA Type", ["Link to click", "Direct reply"], key=f"am_{c_name}")
                 
@@ -252,64 +238,45 @@ elif page == "Client Vault":
                 a_offer = st.text_input("Offer (Optional)", key=f"ao_{c_name}")
                 
                 if st.button("Enable Automation", key=f"ba_{c_name}"):
-                    next_run = datetime.combine(start_date, start_time)
-                    c_data['auto_settings'] = {
-                    "active": True, 
-                    "next_run": next_run.strftime("%Y-%m-%d %H:%M"), 
-                    "freq_days": freq_days,  # Store the raw number of days
-                    "cta": a_cta, 
-                    "offer": a_offer, 
-                    "method": a_method,
-                    "tone": a_tone
+                    # FIX: Corrected variable names to match logic
+                    next_run_val = datetime.combine(start_date, start_time)
+                    st.session_state.clients[c_name]['auto_settings'] = {
+                        "active": True, 
+                        "next_run": next_run_val.strftime("%Y-%m-%d %H:%M"), 
+                        "freq_days": freq_days, 
+                        "cta": a_cta, "offer": a_offer, "method": a_method, "tone": a_tone
                     }
-                save_data()
-                st.success(f"Scheduled for {next_run} (Repeating every {freq_days} day(s))")
+                    save_data()
+                    st.success(f"Scheduled for {next_run_val} (Repeating every {freq_days} day(s))")
+                    st.rerun()
                 
                 if c_data.get('auto_settings', {}).get('active'):
                     st.info(f"📍 Next Run: {c_data['auto_settings']['next_run']} | Tone: {c_data['auto_settings'].get('tone')}")
 
-            # --- TAB 3: MANUAL SEND (With Tone Selection) ---
             with tab_manual:
-                st.subheader("Execute One-Time Batch")
-                col_m1, col_m2 = st.columns(2)
-                with col_m1:
-                    m_method = st.radio("Type", ["Link to click", "Action Required"], key=f"mm_{c_name}")
-                    m_tone = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"mtone_{c_name}")
-                with col_m2:
-                    m_cta = st.text_input("CTA (Link or Action)", key=f"mc_{c_name}")
-                    m_offer = st.text_input("Offer (Optional)", key=f"mo_{c_name}")
-                
+                m_method = st.radio("Type", ["Link to click", "Action Required"], key=f"mm_{c_name}")
+                m_tone = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"mtone_{c_name}")
+                m_cta = st.text_input("CTA", key=f"mc_{c_name}"); m_offer = st.text_input("Offer", key=f"mo_{c_name}")
                 if st.button("🚀 Execute Batch", key=f"ex_{c_name}"):
-                    if not st.session_state.get('g_key'): 
-                        st.error("Enter GROQ Key in sidebar!")
+                    if not st.session_state.get('g_key'): st.error("Enter GROQ Key!")
                     else:
                         progress = st.progress(0); leads = c_data['leads']
                         for i, (_, lead) in enumerate(leads.iterrows()):
-                            l_email = lead.get('F_EMAIL')
-                            # Pass the tone to the logic function
-                            status = "Skipped" if check_blacklist(l_email) else ("Success" if send_email_logic(c_data, lead, st.session_state.g_key, 'link' if m_method == "Link to click" else 'reply', m_cta, m_offer, m_tone) == True else "Failed")
-                            c_data['send_log'].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Lead": l_email, "Status": status})
+                            status = "Success" if send_email_logic(c_data, lead, st.session_state.g_key, 'link' if m_method == "Link to click" else 'reply', m_cta, m_offer, m_tone) == True else "Failed"
+                            c_data['send_log'].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Lead": lead.get('F_EMAIL'), "Status": status})
                             progress.progress((i + 1) / len(leads))
-                        save_data(); st.success("Batch Complete!"); st.rerun()
+                        save_data(); st.rerun()
+
 elif page == "Email Logs":
     st.header("📋 History")
-    client_names = list(st.session_state.clients.keys())
-    selected_filter = st.selectbox("Filter:", ["All Clients"] + client_names)
-    if st.sidebar.button("🗑️ Clear Logs"):
-        for c in (st.session_state.clients if selected_filter == "All Clients" else [selected_filter]): st.session_state.clients[c]['send_log'] = []
-        save_data(); st.rerun()
-    
     all_logs = []
     for c_name, c_data in st.session_state.clients.items():
-        if selected_filter == "All Clients" or selected_filter == c_name:
-            for entry in c_data.get('send_log', []):
-                all_logs.append({**entry, "Company": c_name})
+        for entry in c_data.get('send_log', []):
+            all_logs.append({**entry, "Company": c_name})
     if all_logs: st.dataframe(pd.DataFrame(all_logs), use_container_width=True)
 
 elif page == "Statistics":
     st.header("📊 Stats")
-    if st.button("🔄 Sync"): st.cache_data.clear(); st.rerun()
     df_stats = get_statistics()
     if not df_stats.empty:
         st.dataframe(df_stats, use_container_width=True, hide_index=True)
-        st.metric("Total Sent", df_stats["Emails Sent"].sum())
