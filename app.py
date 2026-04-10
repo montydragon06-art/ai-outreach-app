@@ -152,6 +152,7 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
             f"You are a professional assistant for {biz_name}. Writing to {s_name}.\n"
             f"TONE: The email MUST sound {tone}.\n"
             "STRICT RULES: 1. NO GREETING. 2. NO SIGN-OFF. 3. NO PLACEHOLDERS. 4. LINK AT ABSOLUTE END."
+            "CRITICAL: Do not include a greeting like 'Dear' or 'Hi'. Start the email body immediately with the first sentence."
         )
         
         user_msg = f"Description: {client_info['desc']}\nOffer: {offer_input}\nAction: {cta_context}"
@@ -227,11 +228,14 @@ elif page == "Client Vault":
     if not st.session_state.clients: 
         st.info("No clients found.")
     
+    # Use list() to prevent dictionary size change errors during deletion
     for c_name in list(st.session_state.clients.keys()):
         c_data = st.session_state.clients[c_name]
+        
         with st.expander(f"🏢 {c_name}"):
             tab_info, tab_auto, tab_manual = st.tabs(["Edit Account", "Automation", "Manual Batch"])
             
+            # --- TAB 1: EDIT ACCOUNT (Privacy Link & Leads CSV Update) ---
             with tab_info:
                 st.subheader("Update Client Data & Leads")
                 new_name = st.text_input("Business Name", value=c_data.get('name', c_name), key=f"en_{c_name}")
@@ -239,10 +243,9 @@ elif page == "Client Vault":
                 new_pw = st.text_input("App Password", value=c_data.get('app_pw', ''), type="password", key=f"ep_{c_name}")
                 new_desc = st.text_area("Description", value=c_data.get('desc', ''), key=f"ed_{c_name}")
                 
-                # NEW: Editable Privacy Link
+                # Editable Privacy Link
                 new_privacy = st.text_input("Privacy Policy URL", value=c_data.get('privacy_url', PRIVACY_PDF_URL), key=f"epriv_{c_name}")
                 
-                # NEW: Lead Document Update
                 st.write("---")
                 st.write("📂 **Replace Leads CSV/XLSX** (Leave blank to keep current leads)")
                 new_file = st.file_uploader("Upload new leads file", type=["csv", "xlsx"], key=f"efile_{c_name}")
@@ -259,26 +262,31 @@ elif page == "Client Vault":
                     
                     # Process new file if uploaded
                     if new_file:
-                        new_df = pd.read_excel(new_file) if new_file.name.endswith('.xlsx') else pd.read_csv(new_file, encoding='latin1')
-                        new_df.columns = [str(c).strip().upper() for c in new_df.columns]
-                        new_df = new_df.rename(columns={"NAME": "F_NAME", "EMAIL": "F_EMAIL", "SOURCE": "F_SOURCE"})
-                        st.session_state.clients[c_name]['leads'] = new_df
-                        st.info("Lead database updated.")
+                        try:
+                            new_df = pd.read_excel(new_file) if new_file.name.endswith('.xlsx') else pd.read_csv(new_file, encoding='latin1')
+                            new_df.columns = [str(c).strip().upper() for c in new_df.columns]
+                            new_df = new_df.rename(columns={"NAME": "F_NAME", "EMAIL": "F_EMAIL", "SOURCE": "F_SOURCE"})
+                            st.session_state.clients[c_name]['leads'] = new_df
+                            st.info("Lead database updated successfully.")
+                        except Exception as e:
+                            st.error(f"Error processing file: {e}")
 
                     save_data()
                     st.success("Client information and leads synced to cloud.")
                     st.rerun()
 
                 if st.button("🗑️ Delete Client", key=f"del_{c_name}", type="primary"):
-                    del st.session_state.clients[c_name]; save_data(); st.rerun()
-        # ---- tab auto and tab manual ---- #
+                    del st.session_state.clients[c_name]
+                    save_data()
+                    st.rerun()
+
+            # --- TAB 2: AUTOMATION ---
             with tab_auto:
                 st.subheader("Schedule Campaigns")
                 col_a, col_b = st.columns(2)
                 with col_a:
                     start_date = st.date_input("Start Date", key=f"date_{c_name}")
                     start_time = st.time_input("Start Time", key=f"time_{c_name}")
-                    # UI Fix: freq_days is now properly initialized
                     freq_days = st.number_input("Repeat every (days):", min_value=1, value=1, step=1, key=f"freq_{c_name}")
                 with col_b:
                     a_tone = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"atone_{c_name}")
@@ -288,25 +296,28 @@ elif page == "Client Vault":
                 a_offer = st.text_input("Offer (Optional)", key=f"ao_{c_name}")
                 
                 if st.button("Enable Automation", key=f"ba_{c_name}"):
-                    # FIX: Corrected variable names to match logic
                     next_run_val = datetime.combine(start_date, start_time)
                     st.session_state.clients[c_name]['auto_settings'] = {
                         "active": True, 
                         "next_run": next_run_val.strftime("%Y-%m-%d %H:%M"), 
                         "freq_days": freq_days, 
-                        "cta": a_cta, "offer": a_offer, "method": a_method, "tone": a_tone
+                        "cta": a_cta, 
+                        "offer": a_offer, 
+                        "method": a_method, 
+                        "tone": a_tone
                     }
                     save_data()
-                    st.success(f"Scheduled for {next_run_val} (Repeating every {freq_days} day(s))")
+                    st.success(f"Scheduled for {next_run_val.strftime('%Y-%m-%d %H:%M')}...")
                     st.rerun()
                 
                 if c_data.get('auto_settings', {}).get('active'):
                     st.info(f"📍 Next Run: {c_data['auto_settings']['next_run']} | Tone: {c_data['auto_settings'].get('tone')}")
+
+            # --- TAB 3: MANUAL BATCH ---
             with tab_manual:
                 st.subheader("🚀 Execute One-Time Batch")
                 st.markdown("---")
     
-                # Selection Area
                 col_m1, col_m2 = st.columns(2)
                 with col_m1:
                     m_method = st.radio(
@@ -323,65 +334,72 @@ elif page == "Client Vault":
                     )
 
                 st.markdown("---")
-    
-                # Message Content Area
                 st.write("### 3. Customize the Message Content")
     
                 m_offer = st.text_area(
                     "The Special Offer", 
-                    placeholder="e.g., A 20% discount code for first-time buyers or a free 15-minute consultation.",
-                    key=f"mo_{c_name}",
-                    help="What value are you providing in this email?"
+                    placeholder="e.g., A 20% discount code for first-time buyers...",
+                    key=f"mo_{c_name}"
                 )
     
                 if m_method == "Link to click":
                     m_cta = st.text_input(
                         "Destination URL (Link)", 
-                        placeholder="https://yourwebsite.com/landing-page",
-                        key=f"mc_{c_name}",
-                        help="The AI will turn this into a tracking link at the end of the email."
+                        placeholder="https://yourwebsite.com",
+                        key=f"mc_{c_name}"
                     )
                 else:
                     m_cta = st.text_input(
                         "Call to Action (Reply Instruction)", 
-                        placeholder="e.g., Let me know if you're interested in a quick chat.",
-                        key=f"mc_{c_name}",
-                        help="Tell the lead exactly what they should reply with."
+                        placeholder="e.g., Let me know if you're interested.",
+                        key=f"mc_{c_name}"
                     )
 
                 st.write("")
                 if st.button("🚀 Execute Batch Now", key=f"ex_{c_name}", use_container_width=True):
+                    # Validation
                     if not st.session_state.get('g_key'): 
                         st.error("⚠️ Enter your GROQ Key in the sidebar first!")
                     elif m_method == "Link to click" and not m_cta.startswith("http"):
                         st.error("⚠️ Please enter a valid URL starting with http:// or https://")
+                    elif not m_offer or not m_cta:
+                        st.error("⚠️ Please fill in both the Offer and the CTA/Link.")
                     else:
                         progress = st.progress(0)
-                        leads = c_data['leads']
-                        for i, (_, lead) in enumerate(leads.iterrows()):
-                            l_email = lead.get('F_EMAIL')
-                            # Check blacklist
-                            if check_blacklist(l_email):
-                                status = "Skipped"
-                            else:
-                                # Execute logic
-                                res = send_email_logic(
-                                    c_data, lead, st.session_state.g_key, 
-                                    'link' if m_method == "Link to click" else 'reply', 
-                                    m_cta, m_offer, m_tone
-                                )
-                                status = "Success" if res == True else "Failed"
+                        leads = c_data.get('leads', pd.DataFrame())
+                        
+                        if leads.empty:
+                            st.warning("No leads found for this client.")
+                        else:
+                            for i, (_, lead) in enumerate(leads.iterrows()):
+                                l_email = lead.get('F_EMAIL')
+                                
+                                # Safety check for check_blacklist function
+                                try:
+                                    is_blacklisted = check_blacklist(l_email)
+                                except NameError:
+                                    is_blacklisted = False # Fallback if function doesn't exist yet
+                                
+                                if is_blacklisted:
+                                    status = "Skipped"
+                                else:
+                                    res = send_email_logic(
+                                        c_data, lead, st.session_state.g_key, 
+                                        'link' if m_method == "Link to click" else 'reply', 
+                                        m_cta, m_offer, m_tone
+                                    )
+                                    status = "Success" if res == True else "Failed"
                 
-                            c_data['send_log'].append({
-                                "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                                "Lead": l_email, 
-                                "Status": status
-                            })
-                            progress.progress((i + 1) / len(leads))
-            
-                        save_data()
-                        st.success(f"✅ Batch Complete! {len(leads)} leads processed.")
-                        st.rerun()
+                                c_data['send_log'].append({
+                                    "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                                    "Lead": l_email, 
+                                    "Status": status
+                                })
+                                progress.progress((i + 1) / len(leads))
+                
+                            save_data()
+                            st.success(f"✅ Batch Complete! {len(leads)} leads processed.")
+                            st.rerun()
 elif page == "Email Logs":
     st.header("📋 History")
     all_logs = []
