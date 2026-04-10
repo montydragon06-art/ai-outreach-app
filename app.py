@@ -161,7 +161,8 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
             temperature=0.3
         )
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
-        footer = f"<br><br>Best regards,<br>{biz_name}<br><br><hr/><p style='font-size:10px;color:#888;'>Found via: {s_source} | <a href='{FORM_URL}'>Unsubscribe</a></p>"
+        client_privacy = client_info.get('privacy_url', PRIVACY_PDF_URL)
+        footer = f"<br><br>Best regards,<br>{biz_name}<br><br><hr/><p style='font-size:10px;color:#888;'>Found via: {s_source} | <a href='{FORM_URL}'>Unsubscribe</a> | <a href='{client_privacy}'>Privacy Policy</a></p>"
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
         msg = MIMEMultipart(); msg['From'] = f"{biz_name} <{client_info['email']}>"; msg['To'] = s_email; msg['Subject'] = f"Update for {s_name}"
@@ -193,14 +194,34 @@ if page == "Create Client":
         desc = st.text_area("Description")
         b_email = st.text_input("Sender Email")
         app_pw = st.text_input("App Password", type="password")
+        
+        # NEW: Custom Privacy Link
+        p_url = st.text_input("Privacy Policy URL (Link to their PDF/Doc)")
+        
         file = st.file_uploader("Leads Spreadsheet", type=["csv", "xlsx"])
+        
         if st.form_submit_button("Submit"):
-            if name and file:
+            if name and file and p_url:
                 df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
                 df.columns = [str(c).strip().upper() for c in df.columns]
                 df = df.rename(columns={"NAME": "F_NAME", "EMAIL": "F_EMAIL", "SOURCE": "F_SOURCE"})
-                st.session_state.clients[name] = {"name": name, "desc": desc, "email": b_email, "app_pw": app_pw, "leads": df, "send_log": [], "auto_settings": {}}
-                save_data(); st.success("Client Saved!"); st.rerun()
+                
+                # Added 'privacy_url' to the dictionary
+                st.session_state.clients[name] = {
+                    "name": name, 
+                    "desc": desc, 
+                    "email": b_email, 
+                    "app_pw": app_pw, 
+                    "privacy_url": p_url,
+                    "leads": df, 
+                    "send_log": [], 
+                    "auto_settings": {}
+                }
+                save_data()
+                st.success("Client Created with Custom Privacy Policy!")
+                st.rerun()
+            else:
+                st.error("Please fill in all fields and upload a file.")
 
 elif page == "Client Vault":
     if not st.session_state.clients: 
@@ -212,16 +233,45 @@ elif page == "Client Vault":
             tab_info, tab_auto, tab_manual = st.tabs(["Edit Account", "Automation", "Manual Batch"])
             
             with tab_info:
-                new_name = st.text_input("Business Name", value=c_data.get('name', c_name), key=f"edit_nm_{c_name}")
-                new_email = st.text_input("Sender Email", value=c_data.get('email', ''), key=f"edit_em_{c_name}")
-                new_pw = st.text_input("App Password", value=c_data.get('app_pw', ''), type="password", key=f"edit_pw_{c_name}")
-                new_desc = st.text_area("Description", value=c_data.get('desc', ''), key=f"edit_ds_{c_name}")
-                if st.button("💾 Update Client", key=f"save_{c_name}"):
-                    st.session_state.clients[c_name].update({"name": new_name, "email": new_email, "app_pw": new_pw, "desc": new_desc})
-                    save_data(); st.rerun()
+                st.subheader("Update Client Data & Leads")
+                new_name = st.text_input("Business Name", value=c_data.get('name', c_name), key=f"en_{c_name}")
+                new_email = st.text_input("Sender Email", value=c_data.get('email', ''), key=f"ee_{c_name}")
+                new_pw = st.text_input("App Password", value=c_data.get('app_pw', ''), type="password", key=f"ep_{c_name}")
+                new_desc = st.text_area("Description", value=c_data.get('desc', ''), key=f"ed_{c_name}")
+                
+                # NEW: Editable Privacy Link
+                new_privacy = st.text_input("Privacy Policy URL", value=c_data.get('privacy_url', PRIVACY_PDF_URL), key=f"epriv_{c_name}")
+                
+                # NEW: Lead Document Update
+                st.write("---")
+                st.write("📂 **Replace Leads CSV/XLSX** (Leave blank to keep current leads)")
+                new_file = st.file_uploader("Upload new leads file", type=["csv", "xlsx"], key=f"efile_{c_name}")
+
+                if st.button("💾 Save All Changes", key=f"sv_{c_name}"):
+                    # Update text fields
+                    st.session_state.clients[c_name].update({
+                        "name": new_name, 
+                        "email": new_email, 
+                        "app_pw": new_pw, 
+                        "desc": new_desc,
+                        "privacy_url": new_privacy
+                    })
+                    
+                    # Process new file if uploaded
+                    if new_file:
+                        new_df = pd.read_excel(new_file) if new_file.name.endswith('.xlsx') else pd.read_csv(new_file, encoding='latin1')
+                        new_df.columns = [str(c).strip().upper() for c in new_df.columns]
+                        new_df = new_df.rename(columns={"NAME": "F_NAME", "EMAIL": "F_EMAIL", "SOURCE": "F_SOURCE"})
+                        st.session_state.clients[c_name]['leads'] = new_df
+                        st.info("Lead database updated.")
+
+                    save_data()
+                    st.success("Client information and leads synced to cloud.")
+                    st.rerun()
+
                 if st.button("🗑️ Delete Client", key=f"del_{c_name}", type="primary"):
                     del st.session_state.clients[c_name]; save_data(); st.rerun()
-
+        # ---- tab auto and tab manual ---- #
             with tab_auto:
                 st.subheader("Schedule Campaigns")
                 col_a, col_b = st.columns(2)
