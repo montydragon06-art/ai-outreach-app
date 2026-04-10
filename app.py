@@ -252,18 +252,18 @@ elif page == "Client Vault":
                 a_offer = st.text_input("Offer (Optional)", key=f"ao_{c_name}")
                 
                 if st.button("Enable Automation", key=f"ba_{c_name}"):
-    next_run = datetime.combine(start_date, start_time)
-    c_data['auto_settings'] = {
-        "active": True, 
-        "next_run": next_run.strftime("%Y-%m-%d %H:%M"), 
-        "freq_days": freq_days,  # Store the raw number of days
-        "cta": a_cta, 
-        "offer": a_offer, 
-        "method": a_method,
-        "tone": a_tone
-    }
-    save_data()
-    st.success(f"Scheduled for {next_run} (Repeating every {freq_days} day(s))")
+                    next_run = datetime.combine(start_date, start_time)
+                    c_data['auto_settings'] = {
+                    "active": True, 
+                    "next_run": next_run.strftime("%Y-%m-%d %H:%M"), 
+                    "freq_days": freq_days,  # Store the raw number of days
+                    "cta": a_cta, 
+                    "offer": a_offer, 
+                    "method": a_method,
+                    "tone": a_tone
+                    }
+                save_data()
+                st.success(f"Scheduled for {next_run} (Repeating every {freq_days} day(s))")
                 
                 if c_data.get('auto_settings', {}).get('active'):
                     st.info(f"📍 Next Run: {c_data['auto_settings']['next_run']} | Tone: {c_data['auto_settings'].get('tone')}")
