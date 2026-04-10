@@ -143,35 +143,54 @@ def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_in
         
         if send_type == 'link' and str(cta_input).startswith("http"):
             tracking_link = f"{TRACKER_URL}?dest={cta_input}&client={biz_name.replace(' ', '%20')}&email={s_email}"
-            cta_context = f"At the very end of your message, include this exact HTML hyperlink: <a href='{tracking_link}'>Click here to view details</a>"
+            cta_context = f"At the end, include this exact link: <a href='{tracking_link}'>Click here to view details</a>"
         else:
-            cta_context = "End the message by telling them to simply reply to this email for more information."
+            cta_context = f"End by telling them this exact phrase: {cta_input}"
 
         groq_client = Groq(api_key=groq_key)
+        
+        # FIX 1: Tightened System Message to prevent hallucinations and greetings
         system_msg = (
-            f"You are a professional assistant for {biz_name}. Writing to {s_name}.\n"
-            f"TONE: The email MUST sound {tone}.\n"
-            "STRICT RULES: 1. NO GREETING. 2. NO SIGN-OFF. 3. NO PLACEHOLDERS. 4. LINK AT ABSOLUTE END."
-            "CRITICAL: Do not include a greeting like 'Dear' or 'Hi'. Start the email body immediately with the first sentence."
+            f"You are a factual assistant for {biz_name}. Writing to {s_name}. "
+            f"TONE: {tone}. "
+            "STRICT RULES: "
+            "1. Start immediately with the first sentence. NO GREETINGS (No 'Hi', 'Dear', etc). "
+            "2. DO NOT invent details. ONLY use the 'Offer' provided. If no discount is mentioned, do not add one. "
+            "3. NO SIGN-OFF or signature. 4. NO PLACEHOLDERS like [Name]."
         )
         
-        user_msg = f"Description: {client_info['desc']}\nOffer: {offer_input}\nAction: {cta_context}"
+        user_msg = f"Business Description: {client_info['desc']}\nProvided Offer: {offer_input}\nRequired Action: {cta_context}"
+        
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-            temperature=0.3
+            temperature=0.2 # Lower temperature reduces "creativity" (hallucinations)
         )
+        
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
+        
+        # FIX 2: Fixed the HTML assembly to ensure only ONE greeting exists
         client_privacy = client_info.get('privacy_url', PRIVACY_PDF_URL)
         footer = f"<br><br>Best regards,<br>{biz_name}<br><br><hr/><p style='font-size:10px;color:#888;'>Found via: {s_source} | <a href='{FORM_URL}'>Unsubscribe</a> | <a href='{client_privacy}'>Privacy Policy</a></p>"
+        
+        # Ensure the greeting is only here, and the AI body (ai_body) starts without one
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
         
-        msg = MIMEMultipart(); msg['From'] = f"{biz_name} <{client_info['email']}>"; msg['To'] = s_email; msg['Subject'] = f"Update for {s_name}"
+        msg = MIMEMultipart()
+        msg['From'] = f"{biz_name} <{client_info['email']}>"
+        msg['To'] = s_email
+        msg['Subject'] = f"Regarding {biz_name}" # Better generic subject
+        
         msg.attach(MIMEText(full_html, 'html'))
-        server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls(); server.login(client_info['email'], client_info['app_pw'])
-        server.send_message(msg); server.quit()
+        
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(client_info['email'], client_info['app_pw'])
+        server.send_message(msg)
+        server.quit()
         return True
-    except Exception as e: return str(e)
+    except Exception as e: 
+        return str(e)
 
 # --- 3. SESSION INITIALIZATION ---
 st.set_page_config(page_title="Agency Pro CRM", layout="wide")
