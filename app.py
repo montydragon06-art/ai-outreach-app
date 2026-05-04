@@ -177,62 +177,169 @@ def generate_preview_email(client_info, lead, groq_key, send_type, cta_input, of
     full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
     subject = f"Regarding {biz_name}"
     return subject, full_html, s_email
+def build_email_prompt(client_info, lead, send_type, cta_input, offer_input, tone):
+    """Builds the system/user prompt pair and full HTML email body components. 
+    Shared by both send and preview so they are always identical."""
+    
+    s_name = str(lead.get('F_NAME', 'there')).strip()
+    s_email = str(lead.get('F_EMAIL', '')).strip()
+    s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
+    biz_name = client_info['name']
+    biz_desc = str(client_info.get('desc', '')).strip()
+
+    # --- CTA block ---
+    if send_type == 'link' and str(cta_input).strip().startswith("http"):
+        tracking_link = (
+            f"{TRACKER_URL}?dest={cta_input}"
+            f"&client={biz_name.replace(' ', '%20')}"
+            f"&email={s_email}"
+        )
+        cta_context = (
+            f"End the email with this exact clickable link and no other call to action: "
+            f"<a href='{tracking_link}'>Click here to view details</a>"
+        )
+    else:
+        cta_context = (
+            f"End the email with this exact phrase and no other call to action: {str(cta_input).strip()}"
+        )
+
+    # --- Offer block: explicit about absence so model cannot fill the gap ---
+    offer_stripped = str(offer_input).strip() if offer_input else ""
+    if offer_stripped:
+        offer_block = (
+            f"OFFER TO INCLUDE: Reproduce this offer faithfully and do not add to it, "
+            f"modify it, or embellish it in any way: {offer_stripped}"
+        )
+    else:
+        offer_block = (
+            "OFFER: There is no offer. You MUST NOT mention discounts, deals, savings, "
+            "promotions, special prices, free trials, guarantees, or any benefit or incentive "
+            "that has not been explicitly provided to you. Do not hint at or imply any offer."
+        )
+
+    # --- System message ---
+    system_msg = (
+        f"You are a professional email copywriter writing on behalf of {biz_name}. "
+        f"You are writing to {s_name}.\n\n"
+
+        f"TONE: {tone}\n\n"
+
+        "ABSOLUTE RULES — every one of these is a hard requirement. "
+        "Breaking any of them makes the email unusable:\n"
+
+        "1. FACTUAL ONLY: Every sentence must be directly supported by the Business Description "
+        "or the Offer provided. Do not invent, assume, imply, or embellish any fact, feature, "
+        "benefit, claim, statistic, or detail that you have not been explicitly given.\n"
+
+        "2. NO GREETING: Do not start with 'Hi', 'Dear', 'Hello', or any salutation. "
+        "The greeting is added separately. Begin with the first sentence of the body.\n"
+
+        "3. NO SIGN-OFF: Do not write 'Best regards', 'Sincerely', 'Thanks', or any closing. "
+        "The signature is added separately.\n"
+
+        "4. NO PLACEHOLDERS: Do not write [Name], [Company], [Link], [Date], or any bracketed "
+        "or placeholder text. If you do not have a value, omit that point entirely.\n"
+
+        "5. OFFER DISCIPLINE: Follow the OFFER instruction below exactly. "
+        "If no offer is provided, write a clean professional outreach email using only "
+        "the Business Description. Do not compensate for the missing offer by inventing benefits.\n"
+
+        "6. ONE CALL TO ACTION: Use only the CTA provided. Do not add extra links, contact details, "
+        "phone numbers, or secondary actions unless they appear in the Business Description.\n"
+
+        "7. LENGTH: 3 to 5 short paragraphs. Concise and direct."
+    )
+
+    # --- User message ---
+    user_msg = (
+        f"Business Description:\n{biz_desc}\n\n"
+        f"{offer_block}\n\n"
+        f"Call to Action:\n{cta_context}"
+    )
+
+    # --- Footer ---
+    client_privacy = client_info.get('privacy_url', PRIVACY_PDF_URL)
+    footer = (
+        f"<br><br>Best regards,<br>{biz_name}<br><br>"
+        f"<hr/>"
+        f"<p style='font-size:10px;color:#888;'>"
+        f"Found via: {s_source} | "
+        f"<a href='{FORM_URL}'>Unsubscribe</a> | "
+        f"<a href='{client_privacy}'>Privacy Policy</a>"
+        f"</p>"
+    )
+
+    return system_msg, user_msg, s_name, s_email, biz_name, footer
+
+
+def generate_preview_email(client_info, lead, groq_key, send_type, cta_input, offer_input, tone="professional"):
+    """Generates a preview email without sending it. Returns (subject, full_html, recipient_email)."""
+    from groq import Groq
+
+    system_msg, user_msg, s_name, s_email, biz_name, footer = build_email_prompt(
+        client_info, lead, send_type, cta_input, offer_input, tone
+    )
+
+    groq_client = Groq(api_key=groq_key)
+    completion = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[
+            {"role": "system", "content": system_msg},
+            {"role": "user",   "content": user_msg}
+        ],
+        temperature=0.1,
+        max_tokens=600
+    )
+
+    ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
+    full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
+    subject = f"A message from {biz_name}"
+
+    return subject, full_html, s_email
+
+
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input, tone="professional"):
+    """Generates and sends one email. Returns True on success or an error string."""
     try:
-        s_name = str(lead.get('F_NAME', 'there')).strip()
-        s_email = str(lead.get('F_EMAIL', '')).strip()
-        s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
-        biz_name = client_info['name']
-        
-        if send_type == 'link' and str(cta_input).startswith("http"):
-            tracking_link = f"{TRACKER_URL}?dest={cta_input}&client={biz_name.replace(' ', '%20')}&email={s_email}"
-            cta_context = f"At the end, include this exact link: <a href='{tracking_link}'>Click here to view details</a>"
-        else:
-            cta_context = f"End by telling them this exact phrase: {cta_input}"
+        from groq import Groq
+
+        system_msg, user_msg, s_name, s_email, biz_name, footer = build_email_prompt(
+            client_info, lead, send_type, cta_input, offer_input, tone
+        )
+
+        if not s_email:
+            return "No email address for lead"
 
         groq_client = Groq(api_key=groq_key)
-        
-        # FIX 1: Tightened System Message to prevent hallucinations and greetings
-        system_msg = (
-            f"You are a factual assistant for {biz_name}. Writing to {s_name}. "
-            f"TONE: {tone}. "
-            "STRICT RULES: "
-            "1. Start immediately with the first sentence. NO GREETINGS (No 'Hi', 'Dear', etc). "
-            "2. DO NOT invent details. ONLY use the 'Offer' provided. If no discount is mentioned, do not add one. "
-            "3. NO SIGN-OFF or signature. 4. NO PLACEHOLDERS like [Name]."
-        )
-        
-        user_msg = f"Business Description: {client_info['desc']}\nProvided Offer: {offer_input}\nRequired Action: {cta_context}"
-        
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-            temperature=0.2 # Lower temperature reduces "creativity" (hallucinations)
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user",   "content": user_msg}
+            ],
+            temperature=0.1,
+            max_tokens=600
         )
-        
+
         ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
-        
-        # FIX 2: Fixed the HTML assembly to ensure only ONE greeting exists
-        client_privacy = client_info.get('privacy_url', PRIVACY_PDF_URL)
-        footer = f"<br><br>Best regards,<br>{biz_name}<br><br><hr/><p style='font-size:10px;color:#888;'>Found via: {s_source} | <a href='{FORM_URL}'>Unsubscribe</a> | <a href='{client_privacy}'>Privacy Policy</a></p>"
-        
-        # Ensure the greeting is only here, and the AI body (ai_body) starts without one
         full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
-        
+        subject = f"A message from {biz_name}"
+
         msg = MIMEMultipart()
-        msg['From'] = f"{biz_name} <{client_info['email']}>"
-        msg['To'] = s_email
-        msg['Subject'] = f"Regarding {biz_name}" # Better generic subject
-        
+        msg['From']    = f"{biz_name} <{client_info['email']}>"
+        msg['To']      = s_email
+        msg['Subject'] = subject
         msg.attach(MIMEText(full_html, 'html'))
-        
+
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(client_info['email'], client_info['app_pw'])
         server.send_message(msg)
         server.quit()
+
         return True
-    except Exception as e: 
+
+    except Exception as e:
         return str(e)
 
 # --- 3. SESSION INITIALIZATION ---
