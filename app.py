@@ -134,6 +134,49 @@ def get_statistics():
     except:
         return pd.DataFrame()
 
+# --- ADD THIS HELPER NEAR send_email_logic ---
+
+def generate_preview_email(client_info, lead, groq_key, send_type, cta_input, offer_input, tone="professional"):
+    """Generates the HTML body of an email without sending it. Returns (subject, html_body) or raises."""
+    from groq import Groq
+
+    s_name = str(lead.get('F_NAME', 'there')).strip()
+    s_email = str(lead.get('F_EMAIL', '')).strip()
+    s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
+    biz_name = client_info['name']
+
+    if send_type == 'link' and str(cta_input).startswith("http"):
+        tracking_link = f"{TRACKER_URL}?dest={cta_input}&client={biz_name.replace(' ', '%20')}&email={s_email}"
+        cta_context = f"At the end, include this exact link: <a href='{tracking_link}'>Click here to view details</a>"
+    else:
+        cta_context = f"End by telling them this exact phrase: {cta_input}"
+
+    groq_client = Groq(api_key=groq_key)
+    system_msg = (
+        f"You are a factual assistant for {biz_name}. Writing to {s_name}. "
+        f"TONE: {tone}. "
+        "STRICT RULES: "
+        "1. Start immediately with the first sentence. NO GREETINGS (No 'Hi', 'Dear', etc). "
+        "2. DO NOT invent details. ONLY use the 'Offer' provided. If no discount is mentioned, do not add one. "
+        "3. NO SIGN-OFF or signature. 4. NO PLACEHOLDERS like [Name]."
+    )
+    user_msg = f"Business Description: {client_info['desc']}\nProvided Offer: {offer_input}\nRequired Action: {cta_context}"
+
+    completion = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
+        temperature=0.2
+    )
+    ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
+    client_privacy = client_info.get('privacy_url', PRIVACY_PDF_URL)
+    footer = (
+        f"<br><br>Best regards,<br>{biz_name}<br><br><hr/>"
+        f"<p style='font-size:10px;color:#888;'>Found via: {s_source} | "
+        f"<a href='{FORM_URL}'>Unsubscribe</a> | <a href='{client_privacy}'>Privacy Policy</a></p>"
+    )
+    full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
+    subject = f"Regarding {biz_name}"
+    return subject, full_html, s_email
 def send_email_logic(client_info, lead, groq_key, send_type, cta_input, offer_input, tone="professional"):
     try:
         s_name = str(lead.get('F_NAME', 'there')).strip()
@@ -333,92 +376,158 @@ elif page == "Client Vault":
                     st.info(f"📍 Next Run: {c_data['auto_settings']['next_run']} | Tone: {c_data['auto_settings'].get('tone')}")
 
             # --- TAB 3: MANUAL BATCH ---
+            # --- TAB 3: MANUAL BATCH ---
             with tab_manual:
                 st.subheader("🚀 Execute One-Time Batch")
                 st.markdown("---")
-    
+
                 col_m1, col_m2 = st.columns(2)
                 with col_m1:
                     m_method = st.radio(
-                        "1. How should they respond?", 
-                        ["Link to click", "Direct reply to email"], 
+                        "1. How should they respond?",
+                        ["Link to click", "Direct reply to email"],
                         key=f"mm_{c_name}",
                         help="Choose 'Link' to include a tracking URL, or 'Direct reply' to encourage a conversation."
                     )
                 with col_m2:
                     m_tone = st.selectbox(
-                        "2. Choose the Email Tone", 
-                        ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], 
+                        "2. Choose the Email Tone",
+                        ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"],
                         key=f"mtone_{c_name}"
                     )
 
                 st.markdown("---")
                 st.write("### 3. Customize the Message Content")
-    
+
                 m_offer = st.text_area(
-                    "The Special Offer", 
+                    "The Special Offer",
                     placeholder="e.g., A 20% discount code for first-time buyers...",
                     key=f"mo_{c_name}"
                 )
-    
+
                 if m_method == "Link to click":
                     m_cta = st.text_input(
-                        "Destination URL (Link)", 
+                        "Destination URL (Link)",
                         placeholder="https://yourwebsite.com",
                         key=f"mc_{c_name}"
                     )
                 else:
                     m_cta = st.text_input(
-                        "Call to Action (Reply Instruction)", 
+                        "Call to Action (Reply Instruction)",
                         placeholder="e.g., Let me know if you're interested.",
                         key=f"mc_{c_name}"
                     )
 
                 st.write("")
-                if st.button("🚀 Execute Batch Now", key=f"ex_{c_name}", use_container_width=True):
-                    # Validation
-                    if not st.session_state.get('g_key'): 
+
+                # --- Preview state keys ---
+                preview_key = f"preview_data_{c_name}"
+                confirmed_key = f"preview_confirmed_{c_name}"
+
+                # --- STEP 1: Preview button ---
+                if st.button("🔍 Preview Sample Emails First", key=f"prev_{c_name}", use_container_width=True):
+                    if not st.session_state.get('g_key'):
                         st.error("⚠️ Enter your GROQ Key in the sidebar first!")
                     elif m_method == "Link to click" and not m_cta.startswith("http"):
                         st.error("⚠️ Please enter a valid URL starting with http:// or https://")
                     elif not m_offer or not m_cta:
                         st.error("⚠️ Please fill in both the Offer and the CTA/Link.")
                     else:
-                        progress = st.progress(0)
                         leads = c_data.get('leads', pd.DataFrame())
-                        
                         if leads.empty:
                             st.warning("No leads found for this client.")
                         else:
-                            for i, (_, lead) in enumerate(leads.iterrows()):
-                                l_email = lead.get('F_EMAIL')
-                                
-                                # Safety check for check_blacklist function
-                                try:
-                                    is_blacklisted = check_blacklist(l_email)
-                                except NameError:
-                                    is_blacklisted = False # Fallback if function doesn't exist yet
-                                
-                                if is_blacklisted:
-                                    status = "Skipped"
-                                else:
-                                    res = send_email_logic(
-                                        c_data, lead, st.session_state.g_key, 
-                                        'link' if m_method == "Link to click" else 'reply', 
-                                        m_cta, m_offer, m_tone
-                                    )
-                                    status = "Success" if res == True else "Failed"
-                
-                                c_data['send_log'].append({
-                                    "Time": datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                                    "Lead": l_email, 
-                                    "Status": status
-                                })
-                                progress.progress((i + 1) / len(leads))
-                
-                            save_data()
-                            st.success(f"✅ Batch Complete! {len(leads)} leads processed.")
+                            sample_leads = leads.head(2)  # Preview first 2 leads
+                            previews = []
+                            send_type = 'link' if m_method == "Link to click" else 'reply'
+                            with st.spinner("Generating preview emails via GROQ..."):
+                                for _, lead in sample_leads.iterrows():
+                                    try:
+                                        subj, html_body, recipient = generate_preview_email(
+                                            c_data, lead, st.session_state.g_key,
+                                            send_type, m_cta, m_offer, m_tone
+                                        )
+                                        previews.append({"to": recipient, "subject": subj, "html": html_body})
+                                    except Exception as e:
+                                        previews.append({"to": lead.get('F_EMAIL', '?'), "subject": "Error", "html": f"<p>Failed to generate: {e}</p>"})
+
+                            st.session_state[preview_key] = {
+                                "previews": previews,
+                                "send_type": send_type,
+                                "cta": m_cta,
+                                "offer": m_offer,
+                                "tone": m_tone,
+                            }
+                            st.session_state[confirmed_key] = False
+
+                # --- STEP 2: Show previews if they exist ---
+                if preview_key in st.session_state and not st.session_state.get(confirmed_key, False):
+                    preview_data = st.session_state[preview_key]
+                    previews = preview_data["previews"]
+
+                    st.markdown("---")
+                    st.write(f"### 📧 Sample Preview ({len(previews)} of {len(c_data.get('leads', pd.DataFrame()))} leads)")
+                    st.caption("These are exactly what your leads would receive. Review before confirming.")
+
+                    for i, p in enumerate(previews):
+                        with st.expander(f"Preview {i+1} → To: {p['to']} | Subject: {p['subject']}", expanded=(i == 0)):
+                            st.components.v1.html(p["html"], height=320, scrolling=True)
+
+                    st.markdown("---")
+                    col_confirm, col_cancel = st.columns(2)
+
+                    with col_confirm:
+                        if st.button("✅ Looks Good — Send to All Leads", key=f"confirm_{c_name}", use_container_width=True, type="primary"):
+                            st.session_state[confirmed_key] = True
                             st.rerun()
+
+                    with col_cancel:
+                        if st.button("❌ Cancel — Go Back and Edit", key=f"cancel_{c_name}", use_container_width=True):
+                            del st.session_state[preview_key]
+                            st.session_state.pop(confirmed_key, None)
+                            st.rerun()
+
+                # --- STEP 3: Execute full batch after confirmation ---
+                if st.session_state.get(confirmed_key, False) and preview_key in st.session_state:
+                    preview_data = st.session_state[preview_key]
+                    st.info("✅ Confirmed! Sending to all leads now...")
+
+                    progress = st.progress(0)
+                    leads = c_data.get('leads', pd.DataFrame())
+
+                    for i, (_, lead) in enumerate(leads.iterrows()):
+                        l_email = lead.get('F_EMAIL')
+                        try:
+                            is_blacklisted = check_blacklist(l_email)
+                        except NameError:
+                            is_blacklisted = False
+
+                        if is_blacklisted:
+                            status = "Skipped"
+                        else:
+                            res = send_email_logic(
+                                c_data, lead, st.session_state.g_key,
+                                preview_data["send_type"],
+                                preview_data["cta"],
+                                preview_data["offer"],
+                                preview_data["tone"]
+                            )
+                            status = "Success" if res == True else "Failed"
+
+                        c_data['send_log'].append({
+                            "Time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "Lead": l_email,
+                            "Status": status
+                        })
+                        progress.progress((i + 1) / len(leads))
+
+                    # Clean up preview state
+                    del st.session_state[preview_key]
+                    del st.session_state[confirmed_key]
+
+                    save_data()
+                    st.success(f"✅ Batch Complete! {len(leads)} leads processed.")
+                    st.rerun()
 elif page == "Email Logs":
     st.header("📋 History")
     all_logs = []
