@@ -581,12 +581,13 @@ elif page == "Client Vault":
                                     try:
                                         subj, html_body, recipient = generate_preview_email(
                                             c_data, lead, st.session_state.g_key,
-                                            send_type, m_cta, m_offer, m_tone
+                                            send_type, m_cta, m_offer, m_tone,
+                                            show_logo=m_show_logo
                                         )
                                         previews.append({"to": recipient, "subject": subj, "html": html_body})
                                     except Exception as e:
                                         previews.append({"to": lead.get('F_EMAIL', '?'), "subject": "Error", "html": f"<p>Failed to generate: {e}</p>"})
-                            st.session_state[preview_key]   = {"previews": previews, "send_type": send_type, "cta": m_cta, "offer": m_offer, "tone": m_tone}
+                            st.session_state[preview_key] = {"previews": previews, "send_type": send_type, "cta": m_cta, "offer": m_offer, "tone": m_tone, "show_logo": m_show_logo}
                             st.session_state[confirmed_key] = False
 
                 if preview_key in st.session_state and not st.session_state.get(confirmed_key, False):
@@ -623,7 +624,7 @@ elif page == "Client Vault":
                         if is_blacklisted:
                             status = "Skipped"
                         else:
-                            res    = send_email_logic(c_data, lead, st.session_state.g_key, preview_data["send_type"], preview_data["cta"], preview_data["offer"], preview_data["tone"])
+                            res = send_email_logic(c_data, lead, st.session_state.g_key, preview_data["send_type"], preview_data["cta"], preview_data["offer"], preview_data["tone"], show_logo=preview_data.get("show_logo", True))
                             status = "Success" if res == True else "Failed"
                         c_data['send_log'].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Lead": l_email, "Status": status})
                         progress.progress((i + 1) / len(leads))
@@ -805,12 +806,11 @@ elif page == "Client Vault":
                                         ["Scheduled", "Running", "Completed", "Cancelled"],
                                         index=["Scheduled", "Running", "Completed", "Cancelled"].index(camp_status)
                                     )
-                                with col_e5:
-                                    e_show_logo = st.checkbox(
+                                e_show_logo = st.checkbox(
                                     "Include company logo in emails",
                                     value=campaign.get('show_logo', True),
                                     key=f"esl_{c_name}_{camp_id}"
-                                    )
+                                )
                                 
                                     
 
