@@ -13,7 +13,7 @@ import io
 # --- 1. SETTINGS & SECRETS ---
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScBMsqCrO8tKVW4nYLUOVgAewzqUdrom-VXPPPrhsgxPY0rzg/viewform"
 PRIVACY_PDF_URL = "https://docs.google.com/document/d/1OjaVW-V5VSXJ9k-mjncAj-xF4gHmVUQwVwrBlXTMxow/edit?usp=sharing"
-TRACKER_URL = "https://script.google.com/macros/s/AKfycbxQ45IQwiRw0WxDs9H8QZAFnkkFIHCIQHtMrc6sfEOYJBycj47Q_4EfaycZUJq96K0/exec"
+TRACKER_URL = "https://email-tracker.montydragon06.workers.dev/"
 
 # --- 2. CORE FUNCTIONS ---
 
