@@ -394,23 +394,42 @@ elif page == "Client Vault":
             # ----------------------------------------------------------------
             with tab_info:
                 st.subheader("Update Client Data & Leads")
-                new_name    = st.text_input("Business Name",  value=c_data.get('name', c_name),          key=f"en_{c_name}")
-                new_email   = st.text_input("Sender Email",   value=c_data.get('email', ''),              key=f"ee_{c_name}")
-                new_pw      = st.text_input("App Password",   value=c_data.get('app_pw', ''),             key=f"ep_{c_name}", type="password")
-                new_desc    = st.text_area("Description",     value=c_data.get('desc', ''),               key=f"ed_{c_name}")
-                new_privacy = st.text_input("Privacy Policy URL", value=c_data.get('privacy_url', PRIVACY_PDF_URL), key=f"epriv_{c_name}")
+                new_name    = st.text_input("Business Name",      value=c_data.get('name', c_name),               key=f"en_{c_name}")
+                new_email   = st.text_input("Sender Email",        value=c_data.get('email', ''),                  key=f"ee_{c_name}")
+                new_pw      = st.text_input("App Password",        value=c_data.get('app_pw', ''),                 key=f"ep_{c_name}", type="password")
+                new_desc    = st.text_area("Description",          value=c_data.get('desc', ''),                   key=f"ed_{c_name}")
+                new_privacy = st.text_input("Privacy Policy URL",  value=c_data.get('privacy_url', PRIVACY_PDF_URL), key=f"epriv_{c_name}")
 
-                st.write("---")
+                st.markdown("---")
+                st.subheader("Branding")
+                st.caption("Leave blank for default signature and no logo.")
+                new_logo = st.text_input(
+                    "Logo URL",
+                    value=c_data.get('logo_url', ''),
+                    key=f"elogo_{c_name}",
+                    placeholder="https://yourwebsite.com/logo.png"
+                )
+                new_signature = st.text_area(
+                    "Email Signature",
+                    value=c_data.get('signature', ''),
+                    key=f"esig_{c_name}",
+                    placeholder="John Smith\nSales Director\nAcme Ltd  |  0800 123 456  |  acme.com",
+                    height=100
+                )
+
+                st.markdown("---")
                 st.write("📂 **Replace Leads CSV/XLSX** (Leave blank to keep current leads)")
                 new_file = st.file_uploader("Upload new leads file", type=["csv", "xlsx"], key=f"efile_{c_name}")
 
                 if st.button("💾 Save All Changes", key=f"sv_{c_name}"):
                     st.session_state.clients[c_name].update({
-                        "name": new_name,
-                        "email": new_email,
-                        "app_pw": new_pw,
-                        "desc": new_desc,
-                        "privacy_url": new_privacy
+                        "name":        new_name,
+                        "email":       new_email,
+                        "app_pw":      new_pw,
+                        "desc":        new_desc,
+                        "privacy_url": new_privacy,
+                        "logo_url":    new_logo.strip(),
+                        "signature":   new_signature.strip()
                     })
                     if new_file:
                         try:
@@ -418,7 +437,7 @@ elif page == "Client Vault":
                             new_df.columns = [str(c).strip().upper() for c in new_df.columns]
                             new_df = new_df.rename(columns={"NAME": "F_NAME", "EMAIL": "F_EMAIL", "SOURCE": "F_SOURCE"})
                             st.session_state.clients[c_name]['leads'] = new_df
-                            st.info("Lead database updated successfully.")
+                            st.info("Lead database updated.")
                         except Exception as e:
                             st.error(f"Error processing file: {e}")
                     save_data()
@@ -429,7 +448,6 @@ elif page == "Client Vault":
                     del st.session_state.clients[c_name]
                     save_data()
                     st.rerun()
-
             # ----------------------------------------------------------------
             # TAB 2: AUTOMATION
             # ----------------------------------------------------------------
