@@ -76,6 +76,7 @@ def load_data():
                 info['leads'] = pd.read_json(io.StringIO(info['leads']))
             if 'send_log' not in info: info['send_log'] = []
             if 'auto_settings' not in info: info['auto_settings'] = {}
+            if 'campaigns' not in info: info['campaigns'] = []
             loaded_clients[name] = info
         return loaded_clients
     except Exception as e:
