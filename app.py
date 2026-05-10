@@ -134,50 +134,6 @@ def get_statistics():
         return pd.DataFrame(stats_data)
     except:
         return pd.DataFrame()
-
-# --- ADD THIS HELPER NEAR send_email_logic ---
-
-def generate_preview_email(client_info, lead, groq_key, send_type, cta_input, offer_input, tone="professional"):
-    """Generates the HTML body of an email without sending it. Returns (subject, html_body) or raises."""
-    from groq import Groq
-
-    s_name = str(lead.get('F_NAME', 'there')).strip()
-    s_email = str(lead.get('F_EMAIL', '')).strip()
-    s_source = str(lead.get('F_SOURCE', 'Public Records')).strip()
-    biz_name = client_info['name']
-
-    if send_type == 'link' and str(cta_input).startswith("http"):
-        tracking_link = f"{TRACKER_URL}?dest={cta_input}&client={biz_name.replace(' ', '%20')}&email={s_email}"
-        cta_context = f"At the end, include this exact link: <a href='{tracking_link}'>Click here to view details</a>"
-    else:
-        cta_context = f"End by telling them this exact phrase: {cta_input}"
-
-    groq_client = Groq(api_key=groq_key)
-    system_msg = (
-        f"You are a factual assistant for {biz_name}. Writing to {s_name}. "
-        f"TONE: {tone}. "
-        "STRICT RULES: "
-        "1. Start immediately with the first sentence. NO GREETINGS (No 'Hi', 'Dear', etc). "
-        "2. DO NOT invent details. ONLY use the 'Offer' provided. If no discount is mentioned, do not add one. "
-        "3. NO SIGN-OFF or signature. 4. NO PLACEHOLDERS like [Name]."
-    )
-    user_msg = f"Business Description: {client_info['desc']}\nProvided Offer: {offer_input}\nRequired Action: {cta_context}"
-
-    completion = groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        temperature=0.2
-    )
-    ai_body = completion.choices[0].message.content.strip().replace('\n', '<br>')
-    client_privacy = client_info.get('privacy_url', PRIVACY_PDF_URL)
-    footer = (
-        f"<br><br>Best regards,<br>{biz_name}<br><br><hr/>"
-        f"<p style='font-size:10px;color:#888;'>Found via: {s_source} | "
-        f"<a href='{FORM_URL}'>Unsubscribe</a> | <a href='{client_privacy}'>Privacy Policy</a></p>"
-    )
-    full_html = f"<html><body>Dear {s_name},<br><br>{ai_body}{footer}</body></html>"
-    subject = f"Regarding {biz_name}"
-    return subject, full_html, s_email
 def build_email_prompt(client_info, lead, send_type, cta_input, offer_input, tone):
     """Builds the system/user prompt pair and full HTML email body components. 
     Shared by both send and preview so they are always identical."""
@@ -386,7 +342,7 @@ if page == "Create Client":
                     "privacy_url": p_url,
                     "leads": df, 
                     "send_log": [], 
-                    "auto_settings": {}
+                    "auto_settings": {},
                     "campaigns": [] 
                 }
                 save_data()
