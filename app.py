@@ -106,9 +106,10 @@ def run_automation_check():
                     for _, lead in leads.iterrows():
                         l_email = lead.get('F_EMAIL')
                         status = "Success" if send_email_logic(
-                            c_data, lead, st.session_state.g_key, 
-                            'link' if auto['method'] == "Link to click" else 'reply', 
-                            auto['cta'], auto['offer'], auto['tone']
+                            c_data, lead, st.session_state.g_key,
+                            'link' if auto['method'] == "Link to click" else 'reply',
+                            auto['cta'], auto['offer'], auto['tone'],
+                            show_logo=auto.get('show_logo', True)
                         ) == True else "Failed"
                         c_data['send_log'].append({"Time": now.strftime("%Y-%m-%d %H:%M"), "Lead": l_email, "Status": status})
                 
@@ -495,6 +496,11 @@ elif page == "Client Vault":
 
                 a_cta   = st.text_input("CTA Link/Action", key=f"ac_{c_name}")
                 a_offer = st.text_input("Offer (Optional)", key=f"ao_{c_name}")
+                a_show_logo = st.checkbox(
+                    "Include company logo in automated emails",
+                    value=True,
+                    key=f"alogo_{c_name}"
+                )
 
                 if st.button("Enable Automation", key=f"ba_{c_name}"):
                     next_run_val = datetime.combine(start_date, start_time)
@@ -505,7 +511,8 @@ elif page == "Client Vault":
                         "cta":       a_cta,
                         "offer":     a_offer,
                         "method":    a_method,
-                        "tone":      a_tone
+                        "tone":      a_tone,
+                        "show_logo": a_show_logo
                     }
                     save_data()
                     st.success(f"Scheduled for {next_run_val.strftime('%Y-%m-%d %H:%M')}...")
@@ -680,6 +687,10 @@ elif page == "Client Vault":
                             "CTA Link or Instruction",
                             placeholder="https://yoursite.com or 'Reply to this email'"
                         )
+                        camp_show_logo = st.checkbox(
+                            "Include company logo in emails",
+                            value=True
+                        )
 
                     submitted = st.form_submit_button("💾 Save Campaign", use_container_width=True)
 
@@ -701,6 +712,7 @@ elif page == "Client Vault":
                                 "tone":         camp_tone,
                                 "method":       camp_method,
                                 "cta":          camp_cta,
+                                "show_logo":   camp_show_logo,
                                 "status":       "Scheduled",
                                 "created_at":   datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "emails_sent":  0
@@ -793,6 +805,14 @@ elif page == "Client Vault":
                                         ["Scheduled", "Running", "Completed", "Cancelled"],
                                         index=["Scheduled", "Running", "Completed", "Cancelled"].index(camp_status)
                                     )
+                                with col_e5:
+                                    e_show_logo = st.checkbox(
+                                    "Include company logo in emails",
+                                    value=campaign.get('show_logo', True),
+                                    key=f"esl_{c_name}_{camp_id}"
+                                    )
+                                
+                                    
 
                                 col_save, col_delete = st.columns(2)
                                 with col_save:
@@ -812,6 +832,7 @@ elif page == "Client Vault":
                                         "tone":        e_tone,
                                         "method":      e_method,
                                         "cta":         e_cta,
+                                        "show_logo":   e_show_logo,
                                         "status":      e_status,
                                         "created_at":  campaign.get('created_at', ''),
                                         "emails_sent": campaign.get('emails_sent', 0)
