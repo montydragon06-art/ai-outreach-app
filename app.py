@@ -77,6 +77,9 @@ def load_data():
             if 'send_log' not in info: info['send_log'] = []
             if 'auto_settings' not in info: info['auto_settings'] = {}
             if 'campaigns' not in info: info['campaigns'] = []
+            if 'send_log' not in info: info['send_log'] = []
+            if 'logo_url' not in info: info['logo_url'] = ''
+            if 'signature' not in info: info['signature'] = ''
             loaded_clients[name] = info
         return loaded_clients
     except Exception as e:
@@ -317,40 +320,55 @@ with st.sidebar:
 if page == "Create Client":
     st.header("Create New Client")
     with st.form("create_form"):
-        name = st.text_input("Business Name")
-        desc = st.text_area("Description")
+        st.subheader("Business Details")
+        name    = st.text_input("Business Name")
+        desc    = st.text_area("Business Description")
         b_email = st.text_input("Sender Email")
-        app_pw = st.text_input("App Password", type="password")
-        
-        # NEW: Custom Privacy Link
-        p_url = st.text_input("Privacy Policy URL (Link to their PDF/Doc)")
-        
+        app_pw  = st.text_input("App Password", type="password")
+        p_url   = st.text_input("Privacy Policy URL")
+
+        st.markdown("---")
+        st.subheader("Branding (Optional)")
+        st.caption("Leave these blank for a default signature and no logo.")
+
+        logo_url = st.text_input(
+            "Logo URL",
+            placeholder="https://yourwebsite.com/logo.png",
+            help="Right-click your logo on your website → Copy image address. Must be a direct .png/.jpg link."
+        )
+        signature = st.text_area(
+            "Email Signature",
+            placeholder="John Smith\nSales Director\nAcme Ltd  |  0800 123 456  |  acme.com",
+            help="Appears at the bottom of every email. Leave blank for a default 'Best regards, [Business Name]' signature.",
+            height=100
+        )
+
+        st.markdown("---")
         file = st.file_uploader("Leads Spreadsheet", type=["csv", "xlsx"])
-        
-        if st.form_submit_button("Submit"):
+
+        if st.form_submit_button("Create Client"):
             if name and file and p_url:
                 df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
                 df.columns = [str(c).strip().upper() for c in df.columns]
                 df = df.rename(columns={"NAME": "F_NAME", "EMAIL": "F_EMAIL", "SOURCE": "F_SOURCE"})
-                
-                # Added 'privacy_url' to the dictionary
                 st.session_state.clients[name] = {
-                    "name": name, 
-                    "desc": desc, 
-                    "email": b_email, 
-                    "app_pw": app_pw, 
-                    "privacy_url": p_url,
-                    "leads": df, 
-                    "send_log": [], 
+                    "name":          name,
+                    "desc":          desc,
+                    "email":         b_email,
+                    "app_pw":        app_pw,
+                    "privacy_url":   p_url,
+                    "logo_url":      logo_url.strip(),
+                    "signature":     signature.strip(),
+                    "leads":         df,
+                    "send_log":      [],
                     "auto_settings": {},
-                    "campaigns": [] 
+                    "campaigns":     []
                 }
                 save_data()
-                st.success("Client Created with Custom Privacy Policy!")
+                st.success("Client created!")
                 st.rerun()
             else:
-                st.error("Please fill in all fields and upload a file.")
-
+                st.error("Business Name, Privacy URL and a Leads file are all required.")
 elif page == "Client Vault":
     if not st.session_state.clients:
         st.info("No clients found.")
