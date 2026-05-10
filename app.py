@@ -557,6 +557,12 @@ elif page == "Client Vault":
                 else:
                     m_cta = st.text_input("Call to Action (Reply Instruction)", placeholder="e.g., Let me know if you're interested.", key=f"mc_{c_name}")
 
+                m_show_logo = st.checkbox(
+                    "Include company logo in emails",
+                    value=True,
+                    key=f"mlogo_{c_name}"
+                )
+
                 st.write("")
 
                 preview_key   = f"preview_data_{c_name}"
