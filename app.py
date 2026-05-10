@@ -387,6 +387,7 @@ if page == "Create Client":
                     "leads": df, 
                     "send_log": [], 
                     "auto_settings": {}
+                    "campaigns": [] 
                 }
                 save_data()
                 st.success("Client Created with Custom Privacy Policy!")
@@ -395,42 +396,48 @@ if page == "Create Client":
                 st.error("Please fill in all fields and upload a file.")
 
 elif page == "Client Vault":
-    if not st.session_state.clients: 
+    if not st.session_state.clients:
         st.info("No clients found.")
-    
-    # Use list() to prevent dictionary size change errors during deletion
+
     for c_name in list(st.session_state.clients.keys()):
         c_data = st.session_state.clients[c_name]
-        
+
+        # Ensure campaigns key exists on older records
+        if 'campaigns' not in c_data:
+            c_data['campaigns'] = []
+
         with st.expander(f"🏢 {c_name}"):
-            tab_info, tab_auto, tab_manual = st.tabs(["Edit Account", "Automation", "Manual Batch"])
-            
-            # --- TAB 1: EDIT ACCOUNT (Privacy Link & Leads CSV Update) ---
+            tab_info, tab_auto, tab_manual, tab_new_campaign, tab_saved_campaigns = st.tabs([
+                "Edit Account",
+                "Automation",
+                "Manual Batch",
+                "Create Campaign",
+                "Saved Campaigns"
+            ])
+
+            # ----------------------------------------------------------------
+            # TAB 1: EDIT ACCOUNT
+            # ----------------------------------------------------------------
             with tab_info:
                 st.subheader("Update Client Data & Leads")
-                new_name = st.text_input("Business Name", value=c_data.get('name', c_name), key=f"en_{c_name}")
-                new_email = st.text_input("Sender Email", value=c_data.get('email', ''), key=f"ee_{c_name}")
-                new_pw = st.text_input("App Password", value=c_data.get('app_pw', ''), type="password", key=f"ep_{c_name}")
-                new_desc = st.text_area("Description", value=c_data.get('desc', ''), key=f"ed_{c_name}")
-                
-                # Editable Privacy Link
+                new_name    = st.text_input("Business Name",  value=c_data.get('name', c_name),          key=f"en_{c_name}")
+                new_email   = st.text_input("Sender Email",   value=c_data.get('email', ''),              key=f"ee_{c_name}")
+                new_pw      = st.text_input("App Password",   value=c_data.get('app_pw', ''),             key=f"ep_{c_name}", type="password")
+                new_desc    = st.text_area("Description",     value=c_data.get('desc', ''),               key=f"ed_{c_name}")
                 new_privacy = st.text_input("Privacy Policy URL", value=c_data.get('privacy_url', PRIVACY_PDF_URL), key=f"epriv_{c_name}")
-                
+
                 st.write("---")
                 st.write("📂 **Replace Leads CSV/XLSX** (Leave blank to keep current leads)")
                 new_file = st.file_uploader("Upload new leads file", type=["csv", "xlsx"], key=f"efile_{c_name}")
 
                 if st.button("💾 Save All Changes", key=f"sv_{c_name}"):
-                    # Update text fields
                     st.session_state.clients[c_name].update({
-                        "name": new_name, 
-                        "email": new_email, 
-                        "app_pw": new_pw, 
+                        "name": new_name,
+                        "email": new_email,
+                        "app_pw": new_pw,
                         "desc": new_desc,
                         "privacy_url": new_privacy
                     })
-                    
-                    # Process new file if uploaded
                     if new_file:
                         try:
                             new_df = pd.read_excel(new_file) if new_file.name.endswith('.xlsx') else pd.read_csv(new_file, encoding='latin1')
@@ -440,9 +447,8 @@ elif page == "Client Vault":
                             st.info("Lead database updated successfully.")
                         except Exception as e:
                             st.error(f"Error processing file: {e}")
-
                     save_data()
-                    st.success("Client information and leads synced to cloud.")
+                    st.success("Client information synced to cloud.")
                     st.rerun()
 
                 if st.button("🗑️ Delete Client", key=f"del_{c_name}", type="primary"):
@@ -450,41 +456,44 @@ elif page == "Client Vault":
                     save_data()
                     st.rerun()
 
-            # --- TAB 2: AUTOMATION ---
+            # ----------------------------------------------------------------
+            # TAB 2: AUTOMATION
+            # ----------------------------------------------------------------
             with tab_auto:
                 st.subheader("Schedule Campaigns")
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    start_date = st.date_input("Start Date", key=f"date_{c_name}")
-                    start_time = st.time_input("Start Time", key=f"time_{c_name}")
-                    freq_days = st.number_input("Repeat every (days):", min_value=1, value=1, step=1, key=f"freq_{c_name}")
+                    start_date = st.date_input("Start Date",           key=f"date_{c_name}")
+                    start_time = st.time_input("Start Time",           key=f"time_{c_name}")
+                    freq_days  = st.number_input("Repeat every (days):", min_value=1, value=1, step=1, key=f"freq_{c_name}")
                 with col_b:
-                    a_tone = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"atone_{c_name}")
+                    a_tone   = st.selectbox("Email Tone", ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"], key=f"atone_{c_name}")
                     a_method = st.radio("CTA Type", ["Link to click", "Direct reply"], key=f"am_{c_name}")
-                
-                a_cta = st.text_input("CTA Link/Action", key=f"ac_{c_name}")
+
+                a_cta   = st.text_input("CTA Link/Action", key=f"ac_{c_name}")
                 a_offer = st.text_input("Offer (Optional)", key=f"ao_{c_name}")
-                
+
                 if st.button("Enable Automation", key=f"ba_{c_name}"):
                     next_run_val = datetime.combine(start_date, start_time)
                     st.session_state.clients[c_name]['auto_settings'] = {
-                        "active": True, 
-                        "next_run": next_run_val.strftime("%Y-%m-%d %H:%M"), 
-                        "freq_days": freq_days, 
-                        "cta": a_cta, 
-                        "offer": a_offer, 
-                        "method": a_method, 
-                        "tone": a_tone
+                        "active":    True,
+                        "next_run":  next_run_val.strftime("%Y-%m-%d %H:%M"),
+                        "freq_days": freq_days,
+                        "cta":       a_cta,
+                        "offer":     a_offer,
+                        "method":    a_method,
+                        "tone":      a_tone
                     }
                     save_data()
                     st.success(f"Scheduled for {next_run_val.strftime('%Y-%m-%d %H:%M')}...")
                     st.rerun()
-                
+
                 if c_data.get('auto_settings', {}).get('active'):
                     st.info(f"📍 Next Run: {c_data['auto_settings']['next_run']} | Tone: {c_data['auto_settings'].get('tone')}")
 
-            # --- TAB 3: MANUAL BATCH ---
-            # --- TAB 3: MANUAL BATCH ---
+            # ----------------------------------------------------------------
+            # TAB 3: MANUAL BATCH
+            # ----------------------------------------------------------------
             with tab_manual:
                 st.subheader("🚀 Execute One-Time Batch")
                 st.markdown("---")
@@ -514,25 +523,15 @@ elif page == "Client Vault":
                 )
 
                 if m_method == "Link to click":
-                    m_cta = st.text_input(
-                        "Destination URL (Link)",
-                        placeholder="https://yourwebsite.com",
-                        key=f"mc_{c_name}"
-                    )
+                    m_cta = st.text_input("Destination URL (Link)", placeholder="https://yourwebsite.com", key=f"mc_{c_name}")
                 else:
-                    m_cta = st.text_input(
-                        "Call to Action (Reply Instruction)",
-                        placeholder="e.g., Let me know if you're interested.",
-                        key=f"mc_{c_name}"
-                    )
+                    m_cta = st.text_input("Call to Action (Reply Instruction)", placeholder="e.g., Let me know if you're interested.", key=f"mc_{c_name}")
 
                 st.write("")
 
-                # --- Preview state keys ---
-                preview_key = f"preview_data_{c_name}"
+                preview_key   = f"preview_data_{c_name}"
                 confirmed_key = f"preview_confirmed_{c_name}"
 
-                # --- STEP 1: Preview button ---
                 if st.button("🔍 Preview Sample Emails First", key=f"prev_{c_name}", use_container_width=True):
                     if not st.session_state.get('g_key'):
                         st.error("⚠️ Enter your GROQ Key in the sidebar first!")
@@ -541,15 +540,14 @@ elif page == "Client Vault":
                     elif not m_offer or not m_cta:
                         st.error("⚠️ Please fill in both the Offer and the CTA/Link.")
                     else:
-                        leads = c_data.get('leads', pd.DataFrame())
+                        leads     = c_data.get('leads', pd.DataFrame())
+                        send_type = 'link' if m_method == "Link to click" else 'reply'
                         if leads.empty:
                             st.warning("No leads found for this client.")
                         else:
-                            sample_leads = leads.head(2)  # Preview first 2 leads
                             previews = []
-                            send_type = 'link' if m_method == "Link to click" else 'reply'
                             with st.spinner("Generating preview emails via GROQ..."):
-                                for _, lead in sample_leads.iterrows():
+                                for _, lead in leads.head(2).iterrows():
                                     try:
                                         subj, html_body, recipient = generate_preview_email(
                                             c_data, lead, st.session_state.g_key,
@@ -558,84 +556,253 @@ elif page == "Client Vault":
                                         previews.append({"to": recipient, "subject": subj, "html": html_body})
                                     except Exception as e:
                                         previews.append({"to": lead.get('F_EMAIL', '?'), "subject": "Error", "html": f"<p>Failed to generate: {e}</p>"})
-
-                            st.session_state[preview_key] = {
-                                "previews": previews,
-                                "send_type": send_type,
-                                "cta": m_cta,
-                                "offer": m_offer,
-                                "tone": m_tone,
-                            }
+                            st.session_state[preview_key]   = {"previews": previews, "send_type": send_type, "cta": m_cta, "offer": m_offer, "tone": m_tone}
                             st.session_state[confirmed_key] = False
 
-                # --- STEP 2: Show previews if they exist ---
                 if preview_key in st.session_state and not st.session_state.get(confirmed_key, False):
                     preview_data = st.session_state[preview_key]
-                    previews = preview_data["previews"]
-
                     st.markdown("---")
-                    st.write(f"### 📧 Sample Preview ({len(previews)} of {len(c_data.get('leads', pd.DataFrame()))} leads)")
+                    st.write(f"### 📧 Sample Preview ({len(preview_data['previews'])} of {len(c_data.get('leads', pd.DataFrame()))} leads)")
                     st.caption("These are exactly what your leads would receive. Review before confirming.")
-
-                    for i, p in enumerate(previews):
+                    for i, p in enumerate(preview_data['previews']):
                         with st.expander(f"Preview {i+1} → To: {p['to']} | Subject: {p['subject']}", expanded=(i == 0)):
                             st.components.v1.html(p["html"], height=320, scrolling=True)
-
                     st.markdown("---")
                     col_confirm, col_cancel = st.columns(2)
-
                     with col_confirm:
                         if st.button("✅ Looks Good — Send to All Leads", key=f"confirm_{c_name}", use_container_width=True, type="primary"):
                             st.session_state[confirmed_key] = True
                             st.rerun()
-
                     with col_cancel:
                         if st.button("❌ Cancel — Go Back and Edit", key=f"cancel_{c_name}", use_container_width=True):
                             del st.session_state[preview_key]
                             st.session_state.pop(confirmed_key, None)
                             st.rerun()
 
-                # --- STEP 3: Execute full batch after confirmation ---
                 if st.session_state.get(confirmed_key, False) and preview_key in st.session_state:
                     preview_data = st.session_state[preview_key]
                     st.info("✅ Confirmed! Sending to all leads now...")
-
                     progress = st.progress(0)
-                    leads = c_data.get('leads', pd.DataFrame())
-
+                    leads    = c_data.get('leads', pd.DataFrame())
                     for i, (_, lead) in enumerate(leads.iterrows()):
                         l_email = lead.get('F_EMAIL')
                         try:
                             is_blacklisted = check_blacklist(l_email)
                         except NameError:
                             is_blacklisted = False
-
                         if is_blacklisted:
                             status = "Skipped"
                         else:
-                            res = send_email_logic(
-                                c_data, lead, st.session_state.g_key,
-                                preview_data["send_type"],
-                                preview_data["cta"],
-                                preview_data["offer"],
-                                preview_data["tone"]
-                            )
+                            res    = send_email_logic(c_data, lead, st.session_state.g_key, preview_data["send_type"], preview_data["cta"], preview_data["offer"], preview_data["tone"])
                             status = "Success" if res == True else "Failed"
-
-                        c_data['send_log'].append({
-                            "Time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "Lead": l_email,
-                            "Status": status
-                        })
+                        c_data['send_log'].append({"Time": datetime.now().strftime("%Y-%m-%d %H:%M"), "Lead": l_email, "Status": status})
                         progress.progress((i + 1) / len(leads))
-
-                    # Clean up preview state
                     del st.session_state[preview_key]
                     del st.session_state[confirmed_key]
-
                     save_data()
                     st.success(f"✅ Batch Complete! {len(leads)} leads processed.")
                     st.rerun()
+
+            # ----------------------------------------------------------------
+            # TAB 4: CREATE CAMPAIGN
+            # ----------------------------------------------------------------
+            with tab_new_campaign:
+                st.subheader("Create New Campaign")
+                st.markdown("---")
+
+                with st.form(key=f"new_campaign_form_{c_name}"):
+                    camp_name = st.text_input(
+                        "Campaign Name",
+                        placeholder="e.g., Summer Promotion 2026"
+                    )
+
+                    col_c1, col_c2 = st.columns(2)
+                    with col_c1:
+                        camp_start_date = st.date_input("Start Date")
+                        camp_email_count = st.number_input(
+                            "Number of Emails to Send",
+                            min_value=1,
+                            max_value=len(c_data.get('leads', pd.DataFrame())) if not c_data.get('leads', pd.DataFrame()).empty else 1,
+                            value=1,
+                            step=1,
+                            help="How many leads from your list to contact in this campaign."
+                        )
+                    with col_c2:
+                        camp_start_time = st.time_input("Start Time")
+                        camp_period_days = st.number_input(
+                            "Send Period (days)",
+                            min_value=1,
+                            value=7,
+                            step=1,
+                            help="Spread the emails evenly across this many days."
+                        )
+
+                    camp_offer = st.text_area(
+                        "Special Offer",
+                        placeholder="e.g., 20% off for new customers — use code SUMMER20 at checkout."
+                    )
+
+                    col_c3, col_c4 = st.columns(2)
+                    with col_c3:
+                        camp_tone = st.selectbox(
+                            "Email Tone",
+                            ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"]
+                        )
+                        camp_method = st.radio(
+                            "CTA Type",
+                            ["Link to click", "Direct reply"]
+                        )
+                    with col_c4:
+                        camp_cta = st.text_input(
+                            "CTA Link or Instruction",
+                            placeholder="https://yoursite.com or 'Reply to this email'"
+                        )
+
+                    submitted = st.form_submit_button("💾 Save Campaign", use_container_width=True)
+
+                    if submitted:
+                        if not camp_name:
+                            st.error("Please give the campaign a name.")
+                        elif not camp_cta:
+                            st.error("Please provide a CTA link or instruction.")
+                        else:
+                            import uuid
+                            new_campaign = {
+                                "id":           str(uuid.uuid4()),
+                                "name":         camp_name,
+                                "start_date":   camp_start_date.strftime("%Y-%m-%d"),
+                                "start_time":   camp_start_time.strftime("%H:%M"),
+                                "email_count":  int(camp_email_count),
+                                "period_days":  int(camp_period_days),
+                                "offer":        camp_offer,
+                                "tone":         camp_tone,
+                                "method":       camp_method,
+                                "cta":          camp_cta,
+                                "status":       "Scheduled",
+                                "created_at":   datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "emails_sent":  0
+                            }
+                            st.session_state.clients[c_name]['campaigns'].append(new_campaign)
+                            save_data()
+                            st.success(f"✅ Campaign '{camp_name}' saved successfully!")
+                            st.rerun()
+
+            # ----------------------------------------------------------------
+            # TAB 5: SAVED CAMPAIGNS
+            # ----------------------------------------------------------------
+            with tab_saved_campaigns:
+                st.subheader("Saved Campaigns")
+                st.markdown("---")
+
+                campaigns = c_data.get('campaigns', [])
+
+                if not campaigns:
+                    st.info("No campaigns yet. Create one in the 'Create Campaign' tab.")
+                else:
+                    for idx, campaign in enumerate(campaigns):
+                        camp_id     = campaign.get('id', str(idx))
+                        camp_status = campaign.get('status', 'Scheduled')
+
+                        # Status badge colour
+                        badge_colour = {
+                            "Scheduled": "🔵",
+                            "Running":   "🟡",
+                            "Completed": "🟢",
+                            "Cancelled": "🔴"
+                        }.get(camp_status, "⚪")
+
+                        with st.expander(
+                            f"{badge_colour} {campaign['name']}  |  "
+                            f"Start: {campaign['start_date']} {campaign['start_time']}  |  "
+                            f"Emails: {campaign['email_count']}  |  "
+                            f"Period: {campaign['period_days']}d  |  "
+                            f"Status: {camp_status}",
+                            expanded=False
+                        ):
+                            with st.form(key=f"edit_campaign_{c_name}_{camp_id}"):
+                                st.write("#### Edit Campaign")
+
+                                e_name = st.text_input("Campaign Name", value=campaign['name'])
+
+                                col_e1, col_e2 = st.columns(2)
+                                with col_e1:
+                                    e_start_date = st.date_input(
+                                        "Start Date",
+                                        value=datetime.strptime(campaign['start_date'], "%Y-%m-%d").date()
+                                    )
+                                    e_email_count = st.number_input(
+                                        "Number of Emails to Send",
+                                        min_value=1,
+                                        max_value=len(c_data.get('leads', pd.DataFrame())) if not c_data.get('leads', pd.DataFrame()).empty else 1,
+                                        value=int(campaign['email_count']),
+                                        step=1
+                                    )
+                                with col_e2:
+                                    e_start_time = st.time_input(
+                                        "Start Time",
+                                        value=datetime.strptime(campaign['start_time'], "%H:%M").time()
+                                    )
+                                    e_period_days = st.number_input(
+                                        "Send Period (days)",
+                                        min_value=1,
+                                        value=int(campaign['period_days']),
+                                        step=1
+                                    )
+
+                                e_offer = st.text_area("Special Offer", value=campaign.get('offer', ''))
+
+                                col_e3, col_e4 = st.columns(2)
+                                with col_e3:
+                                    e_tone = st.selectbox(
+                                        "Email Tone",
+                                        ["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"],
+                                        index=["Professional", "Friendly & Casual", "Urgent", "Direct & Short", "Salesy"].index(campaign.get('tone', 'Professional'))
+                                    )
+                                    e_method = st.radio(
+                                        "CTA Type",
+                                        ["Link to click", "Direct reply"],
+                                        index=["Link to click", "Direct reply"].index(campaign.get('method', 'Link to click'))
+                                    )
+                                with col_e4:
+                                    e_cta = st.text_input("CTA Link or Instruction", value=campaign.get('cta', ''))
+                                    e_status = st.selectbox(
+                                        "Status",
+                                        ["Scheduled", "Running", "Completed", "Cancelled"],
+                                        index=["Scheduled", "Running", "Completed", "Cancelled"].index(camp_status)
+                                    )
+
+                                col_save, col_delete = st.columns(2)
+                                with col_save:
+                                    save_edit = st.form_submit_button("💾 Save Changes", use_container_width=True)
+                                with col_delete:
+                                    delete_camp = st.form_submit_button("🗑️ Delete Campaign", use_container_width=True)
+
+                                if save_edit:
+                                    updated = {
+                                        "id":          camp_id,
+                                        "name":        e_name,
+                                        "start_date":  e_start_date.strftime("%Y-%m-%d"),
+                                        "start_time":  e_start_time.strftime("%H:%M"),
+                                        "email_count": int(e_email_count),
+                                        "period_days": int(e_period_days),
+                                        "offer":       e_offer,
+                                        "tone":        e_tone,
+                                        "method":      e_method,
+                                        "cta":         e_cta,
+                                        "status":      e_status,
+                                        "created_at":  campaign.get('created_at', ''),
+                                        "emails_sent": campaign.get('emails_sent', 0)
+                                    }
+                                    st.session_state.clients[c_name]['campaigns'][idx] = updated
+                                    save_data()
+                                    st.success("Campaign updated.")
+                                    st.rerun()
+
+                                if delete_camp:
+                                    st.session_state.clients[c_name]['campaigns'].pop(idx)
+                                    save_data()
+                                    st.success("Campaign deleted.")
+                                    st.rerun()
 elif page == "Email Logs":
     st.header("📋 History")
     all_logs = []
