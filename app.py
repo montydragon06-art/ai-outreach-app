@@ -100,7 +100,7 @@ def load_data():
 
 # --- NEW: AUTOMATION HEARTBEAT ---
 def run_automation_check():
-    """Immediately sends emails if current time is past next_run and updates schedule."""
+    """Handles both automation heartbeat and scheduled campaign execution."""
     if 'clients' not in st.session_state or not st.session_state.get('g_key'):
         return
 
@@ -108,12 +108,12 @@ def run_automation_check():
     updated = False
 
     for c_name, c_data in st.session_state.clients.items():
+
+        # --- AUTOMATION HEARTBEAT ---
         auto = c_data.get('auto_settings', {})
         if auto.get('active') and auto.get('next_run'):
             next_run_dt = datetime.strptime(auto['next_run'], "%Y-%m-%d %H:%M")
-            
             if now >= next_run_dt:
-                # Trigger sending
                 leads = c_data.get('leads')
                 if leads is not None and not leads.empty:
                     for _, lead in leads.iterrows():
@@ -127,16 +127,94 @@ def run_automation_check():
                                 auto['cta'], auto['offer'], auto['tone'],
                                 show_logo=auto.get('show_logo', True)
                             ) == True else "Failed"
-                        c_data['send_log'].append({"Time": now.strftime("%Y-%m-%d %H:%M"), "Lead": l_email, "Status": status})
-                
-                # Calculate next run time based on current time + freq_days
+                        c_data['send_log'].append({
+                            "Time":   now.strftime("%Y-%m-%d %H:%M"),
+                            "Lead":   l_email,
+                            "Status": status
+                        })
                 new_next_run = now + timedelta(days=int(auto.get('freq_days', 1)))
                 c_data['auto_settings']['next_run'] = new_next_run.strftime("%Y-%m-%d %H:%M")
                 updated = True
-    
+
+        # --- CAMPAIGN EXECUTION ---
+        campaigns = c_data.get('campaigns', [])
+        for idx, campaign in enumerate(campaigns):
+
+            # Only process scheduled campaigns whose start time has passed
+            if campaign.get('status') != 'Scheduled':
+                continue
+
+            camp_start = datetime.strptime(
+                f"{campaign['start_date']} {campaign['start_time']}",
+                "%Y-%m-%d %H:%M"
+            )
+            if now < camp_start:
+                continue
+
+            # Get leads for this campaign
+            leads = c_data.get('leads', pd.DataFrame())
+            if leads.empty:
+                c_data['campaigns'][idx]['status'] = 'Completed'
+                updated = True
+                continue
+
+            email_count  = int(campaign.get('email_count', len(leads)))
+            period_days  = int(campaign.get('period_days', 1))
+            send_type    = 'link' if campaign.get('method') == 'Link to click' else 'reply'
+            emails_sent  = int(campaign.get('emails_sent', 0))
+
+            # Work out how many emails should have been sent by now
+            # Spread email_count evenly across period_days
+            total_minutes   = period_days * 24 * 60
+            minutes_elapsed = max(0, (now - camp_start).total_seconds() / 60)
+            progress_ratio  = min(1.0, minutes_elapsed / total_minutes)
+            target_sent     = min(email_count, int(progress_ratio * email_count) + 1)
+
+            # Send the gap between what's been sent and what should be sent by now
+            emails_to_send_now = target_sent - emails_sent
+
+            if emails_to_send_now <= 0:
+                continue
+
+            # Pick the next unsent leads
+            camp_leads = leads.iloc[emails_sent: emails_sent + emails_to_send_now]
+
+            sent_this_run = 0
+            for _, lead in camp_leads.iterrows():
+                l_email = lead.get('F_EMAIL')
+                if check_blacklist(l_email):
+                    status = "Skipped"
+                else:
+                    res = send_email_logic(
+                        c_data, lead, st.session_state.g_key,
+                        send_type,
+                        campaign.get('cta', ''),
+                        campaign.get('offer', ''),
+                        campaign.get('tone', 'Professional'),
+                        show_logo=campaign.get('show_logo', True)
+                    )
+                    status = "Success" if res == True else "Failed"
+
+                c_data['send_log'].append({
+                    "Time":     now.strftime("%Y-%m-%d %H:%M"),
+                    "Lead":     l_email,
+                    "Status":   status,
+                    "Campaign": campaign['name']
+                })
+                sent_this_run += 1
+
+            # Update campaign progress
+            new_emails_sent = emails_sent + sent_this_run
+            c_data['campaigns'][idx]['emails_sent'] = new_emails_sent
+
+            # Mark complete if all emails sent
+            if new_emails_sent >= email_count:
+                c_data['campaigns'][idx]['status'] = 'Completed'
+
+            updated = True
+
     if updated:
         save_data()
-
 def get_statistics():
     conn = get_conn()
     stats_data = []
@@ -676,13 +754,11 @@ elif page == "Client Vault":
                     col_c1, col_c2 = st.columns(2)
                     with col_c1:
                         camp_start_date = st.date_input("Start Date")
-                        camp_email_count = st.number_input(
+                        e_email_count = st.number_input(
                             "Number of Emails to Send",
                             min_value=1,
-                            max_value=len(c_data.get('leads', pd.DataFrame())) if not c_data.get('leads', pd.DataFrame()).empty else 1,
-                            value=1,
-                            step=1,
-                            help="How many leads from your list to contact in this campaign."
+                            value=int(campaign['email_count']),
+                            step=1
                         )
                     with col_c2:
                         camp_start_time = st.time_input("Start Time")
