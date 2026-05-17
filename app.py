@@ -11,10 +11,9 @@ from streamlit_gsheets import GSheetsConnection
 import io
 
 # --- 1. SETTINGS & SECRETS ---
-FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScBMsqCrO8tKVW4nYLUOVgAewzqUdrom-VXPPPrhsgxPY0rzg/viewform"
 PRIVACY_PDF_URL = "https://docs.google.com/document/d/1OjaVW-V5VSXJ9k-mjncAj-xF4gHmVUQwVwrBlXTMxow/edit?usp=sharing"
 TRACKER_URL = "https://email-tracker.montydragon06.workers.dev/"
-
+UNSUBSCRIBE_URL = "https://email-unsubscribe.montydragon06.workers.dev"
 # --- 2. CORE FUNCTIONS ---
 
 def get_conn():
@@ -37,6 +36,20 @@ def decrypt_data(encrypted_blob):
     except Exception as e:
         # Silently fail or log to avoid breaking the UI on empty loads
         return {}
+def check_blacklist(email):
+    """Returns True if this email has previously unsubscribed."""
+    if not email:
+        return False
+    try:
+        conn = get_conn()
+        df = conn.read(worksheet="Unsubscribes", ttl=60)
+        if df.empty:
+            return False
+        unsubscribed = df.iloc[:, 1].astype(str).str.lower().tolist()
+        return email.strip().lower() in unsubscribed
+    except Exception:
+        return False
+
 
 def save_data():
     cipher = get_cipher()
@@ -105,12 +118,15 @@ def run_automation_check():
                 if leads is not None and not leads.empty:
                     for _, lead in leads.iterrows():
                         l_email = lead.get('F_EMAIL')
-                        status = "Success" if send_email_logic(
-                            c_data, lead, st.session_state.g_key,
-                            'link' if auto['method'] == "Link to click" else 'reply',
-                            auto['cta'], auto['offer'], auto['tone'],
-                            show_logo=auto.get('show_logo', True)
-                        ) == True else "Failed"
+                        if check_blacklist(l_email):
+                            status = "Skipped"
+                        else:
+                            status = "Success" if send_email_logic(
+                                c_data, lead, st.session_state.g_key,
+                                'link' if auto['method'] == "Link to click" else 'reply',
+                                auto['cta'], auto['offer'], auto['tone'],
+                                show_logo=auto.get('show_logo', True)
+                            ) == True else "Failed"
                         c_data['send_log'].append({"Time": now.strftime("%Y-%m-%d %H:%M"), "Lead": l_email, "Status": status})
                 
                 # Calculate next run time based on current time + freq_days
@@ -248,11 +264,18 @@ def build_email_prompt(client_info, lead, send_type, cta_input, offer_input, ton
 
     # --- Legal footer (always present) ---
     client_privacy = client_info.get('privacy_url', PRIVACY_PDF_URL)
+
+    unsubscribe_link = (
+        f"{UNSUBSCRIBE_URL}"
+        f"?email={s_email}"
+        f"&client={biz_name.replace(' ', '%20')}"
+    )
+
     legal_footer = (
         "<div style='margin-top:24px; padding-top:12px; "
         "border-top:1px solid #f0f0f0; font-size:10px; color:#aaa;'>"
         f"Found via: {s_source} &nbsp;|&nbsp; "
-        f"<a href='{FORM_URL}' style='color:#aaa;'>Unsubscribe</a> &nbsp;|&nbsp; "
+        f"<a href='{unsubscribe_link}' style='color:#aaa;'>Unsubscribe</a> &nbsp;|&nbsp; "
         f"<a href='{client_privacy}' style='color:#aaa;'>Privacy Policy</a>"
         "</div>"
     )
@@ -623,10 +646,7 @@ elif page == "Client Vault":
                     leads    = c_data.get('leads', pd.DataFrame())
                     for i, (_, lead) in enumerate(leads.iterrows()):
                         l_email = lead.get('F_EMAIL')
-                        try:
-                            is_blacklisted = check_blacklist(l_email)
-                        except NameError:
-                            is_blacklisted = False
+                        is_blacklisted = check_blacklist(l_email)
                         if is_blacklisted:
                             status = "Skipped"
                         else:
