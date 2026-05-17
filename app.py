@@ -754,11 +754,12 @@ elif page == "Client Vault":
                     col_c1, col_c2 = st.columns(2)
                     with col_c1:
                         camp_start_date = st.date_input("Start Date")
-                        e_email_count = st.number_input(
+                        camp_email_count = st.number_input(
                             "Number of Emails to Send",
                             min_value=1,
-                            value=int(campaign['email_count']),
-                            step=1
+                            value=1,
+                            step=1,
+                            help="How many leads from your list to contact in this campaign."
                         )
                     with col_c2:
                         camp_start_time = st.time_input("Start Time")
@@ -871,7 +872,6 @@ elif page == "Client Vault":
                                     e_email_count = st.number_input(
                                         "Number of Emails to Send",
                                         min_value=1,
-                                        max_value=len(c_data.get('leads', pd.DataFrame())) if not c_data.get('leads', pd.DataFrame()).empty else 1,
                                         value=int(campaign['email_count']),
                                         step=1
                                     )
